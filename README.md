@@ -35,8 +35,12 @@ Compilation
 -----------
 
 To compile QTrace just use the following commands:
+
     ./qtrace/configure.sh
     make
+
+If you get any error about the need to run `make distclean` under the `pixman`
+directory, just run `make` another time.
 
 To avoid too many compile-time dependencies, the `qtrace/configure.sh` script
 compiles QEMU with VNC support only (i.e., no SDL support). Thus, after
