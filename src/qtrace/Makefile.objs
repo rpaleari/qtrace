@@ -1,0 +1,7 @@
+# Only the gate.o module should be included directly inside QEMU, other modules
+# are moved inside libqtrace.so (C++)
+obj-y += gate.o monitor.o
+
+ifeq ($(CONFIG_QTRACE_TAINT),y)
+obj-y += taint/taint.o
+endif

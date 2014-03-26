@@ -1,0 +1,77 @@
+body {
+    width: 90%;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+p.copyright {
+    color: grey;
+    text-align: center;
+    font-size: x-small;
+}
+
+h1 {
+    text-align: center;
+}
+
+table {
+  text-align: left;
+}
+
+table.sysargs {
+  text-align: center;
+  border-collapse: collapse;
+  border: 1px solid black;
+}
+
+table.sysargs th {
+  padding: 4px;
+}
+
+table.sysargs td {
+  padding: 4px;
+  border-top: 1px solid grey;
+}
+
+span.comment {
+  color: grey;
+}
+
+span.flagSuccess {
+  color: green;
+  font-weight: bold;
+}
+
+span.flagFail {
+  color: red;
+  font-weight: bold;
+}
+
+span.flagTaint {
+  color: orange;
+  font-weight: bold;
+}
+
+span.flagEmpty {
+  color: white;
+  font-weight: bold;
+}
+
+span.flagGUI {
+  color: purple;
+  font-weight: bold;
+}
+
+span.taint:hover {
+  color: red;
+}
+
+span.syshead:hover {
+  color: red;
+}
+
+div.sysbody {
+  display: none;
+  margin-bottom: 2em;
+  font-size: x-small;
+}

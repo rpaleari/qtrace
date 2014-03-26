@@ -1,0 +1,10 @@
+TARGETNAME=syscall
+TARGETPATH=bin
+TARGETTYPE=DYNLINK
+TARGETLIBS=$(SDK_LIB_PATH)\kernel32.lib
+UMTYPE=console
+DEFFILE=syscall.def
+DLLENTRY=DllMain
+
+SOURCES= syscall.c 
+I386_SOURCES= syscall-asm.asm
