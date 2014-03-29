@@ -97,16 +97,19 @@ ratio=auto;
         assert s.obj.id not in self.__nodes
         self.__nodes[s.obj.id] = n
 
-        for defidx in set(s.getTaintLabels()):
-            d = self.__nodes[defidx]
-            if d is not None:
-                label = self.__graph.getEdgeLabel(d, n)
-                if label is None:
-                    label = 1
-                else:
-                    label += 1
+        for taintlabel in set(s.getTaintUses()):
+            defobj = self.getSyscallFromLabel(taintlabel)
+            assert defobj is not None
 
-                self.__graph.link(d, n, label)
+            d = self.__nodes[defobj.obj.id]
+            if d is not None:
+                edgelabel = self.__graph.getEdgeLabel(d, n)
+                if edgelabel is None:
+                    edgelabel = 1
+                else:
+                    edgelabel += 1
+
+                self.__graph.link(d, n, edgelabel)
 
         # Nothing to write at the moment
         return ""

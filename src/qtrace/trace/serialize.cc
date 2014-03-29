@@ -59,9 +59,14 @@ static void serialize_argument(SyscallArg *arg,
   out_arg->set_offset(arg->offset);
 
 #ifdef CONFIG_QTRACE_TAINT
-  for (auto it = arg->taint_labels.begin(); it != arg->taint_labels.end();
+  for (auto it = arg->taint_labels_in.begin(); it != arg->taint_labels_in.end();
        it++) {
-    out_arg->add_taintlabels(*it);
+    out_arg->add_taintlabels_in(*it);
+  }
+
+  for (auto it = arg->taint_labels_out.begin(); it != arg->taint_labels_out.end();
+       it++) {
+    out_arg->add_taintlabels_out(*it);
   }
 #endif
 
@@ -150,6 +155,10 @@ void serialize_syscall(const Syscall *syscall) {
     syscall::ExternalReference *ref = out_syscall.add_ref();
     serialize_external_reference(*it, ref);
   }
+
+#ifdef CONFIG_QTRACE_TAINT
+  out_syscall.set_taintlabel_retval(syscall->taintlabel_ret);
+#endif
 
   unsigned int syscall_size = out_syscall.ByteSize();
   outstream.get()->write(reinterpret_cast<char *>(&syscall_size),

@@ -16,10 +16,21 @@
 #include "qtrace/context.h"
 #include "qtrace/logging.h"
 
+#ifdef CONFIG_QTRACE_TAINT
+#include "qtrace/labels.h"
+#endif
+
 Syscall::Syscall(unsigned int param_id, target_ulong param_sysno,
                  target_ulong param_stack, target_ulong param_cr3) :
   is_os_initialized(false), id(param_id), sysno(param_sysno),
-  stack(param_stack), cr3(param_cr3), missing_args(-1), is_active(false) { ; }
+  stack(param_stack), cr3(param_cr3), missing_args(-1), is_active(false) {
+#ifdef CONFIG_QTRACE_TAINT
+  // Initially associate an invalid taint label to the system call return
+  // value. This is useful also in case taint-tracking is temporarily disabled
+  // by the user
+  taint_retval = QTRACE_TAINT_LABEL_INVALID;
+#endif
+}
 
 Syscall::~Syscall() {
   // Delete arguments
@@ -446,7 +457,8 @@ const std::string SyscallArg::to_string(int argno, int indent) const {
       << ", direction? " << SyscallArg::directionToString(direction)
       << ", offset: " << offset << ", size: " << getSize()
       << ", ptrs: " << ptrs.size()
-      << ", labels: " << taint_labels.size();
+      << ", labels: IN " << taint_uses.size()
+      << " OUT " << taint_defs.size();
 
   int i = 0;
   for (auto it = ptrs.begin(); it != ptrs.end(); it++) {
@@ -463,7 +475,8 @@ const std::string Syscall::to_string() const {
   oss << "Syscall " << gbl_context.windows->getSyscallName(sysno)
       << "(0x" << std::hex << sysno << "), "
       << "proc " << cr3 << " retval " << retval
-      << ", " << std::dec << args.size() << " arguments";
+      << "(label 0x%)" << taint_retval
+      << ", " << std::dec << args.size() << " args";
 
   int i = 0;
   for (auto it = args.begin(); it != args.end(); it++) {

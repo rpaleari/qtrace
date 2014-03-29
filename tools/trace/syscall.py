@@ -46,13 +46,22 @@ class Syscall(object):
         self.arguments.sort(lambda a, b: cmp(a.obj.offset, b.obj.offset))
 
     def isSuccess(self):
+        """
+        Check if this syscall was successful.
+        """
         v = ctypes.c_int32(self.obj.retval)
         return v >= 0
 
     def isGUI(self):
+        """
+        Check if this is a GUI (i.e., win32k.sys) system call.
+        """
         return self.obj.sysno > 4095
 
     def dump(self):
+        """
+        Return a string representing this system call object.
+        """
         s = "==== Syscall no. %d (0x%.8x, %s) ====\n" % \
              (self.obj.id, self.obj.sysno, self.name)
         s += "  process: pid = 0x%.8x, tid = 0x%.8x, name = %s\n" % \
@@ -68,10 +77,26 @@ class Syscall(object):
             s += self.arguments[i].dump(i)
         return s
 
-    def getTaintLabels(self):
+    def getTaintUses(self):
+        """
+        Return a sorted list of taint labels _used_ by this system call.
+        """
         labels = set()
         for i in range(len(self.arguments)):
-            labels |= self.arguments[i].getTaintLabels()
+            labels |= self.arguments[i].getTaintUses()
+        labels = list(labels)
+        labels.sort()
+        return labels
+
+    def getTaintDefs(self):
+        """
+        Return a sorted list of taint labels _defined_ by this system call.
+        """
+        labels = set([self.obj.taintret])
+        for i in range(len(self.arguments)):
+            labels |= self.arguments[i].getTaintDefs()
+        labels = list(labels)
+        labels.sort()
         return labels
 
     def execute(self):
@@ -113,7 +138,8 @@ class SyscallArgument(object):
         self.outdata = collapse_intervals(self.obj.outdata)
 
         # Process taint labels
-        self.taintlabels = set(self.obj.taintlabels)
+        self.taintuses = set(self.obj.taintuses)
+        self.taintdefs = set(self.obj.taintdefs)
 
     def allocate(self):
         """
@@ -171,10 +197,22 @@ class SyscallArgument(object):
 
         return r
 
-    def getTaintLabels(self):
-        labels = set(self.obj.taintlabels)
+    def getTaintUses(self):
+        """
+        Return a set of taint labels _used_ by this syscall argument.
+        """
+        labels = set(self.obj.taintuses)
         for i in range(len(self.pointers)):
-            labels |= self.pointers[i].getTaintLabels()
+            labels |= self.pointers[i].getTaintUses()
+        return labels
+
+    def getTaintDefs(self):
+        """
+        Return a set of taint labels _defined_ by this syscall argument.
+        """
+        labels = set(self.obj.taintdefs)
+        for i in range(len(self.pointers)):
+            labels |= self.pointers[i].getTaintDefs()
         return labels
 
     def getDirectionName(self):

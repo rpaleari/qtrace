@@ -75,19 +75,19 @@ class HTMLOutputGenerator(output.OutputGenerator):
 """
         return s
 
-    def __generateFlags(self, s):
+    def __generateFlags(self, sysobj):
         ff = []
-        if s.isSuccess():
+        if sysobj.isSuccess():
             ff.append('<span title="Success" class="flagSuccess">S</span>')
         else:
             ff.append('<span title="Failed" class="flagFail">F</span>')
 
-        if len(s.getTaintLabels()) > 0:
+        if len(sysobj.getTaintUses()) > 0:
             ff.append('<span title="Tainted" class="flagTaint">T</span>')
         else:
             ff.append('<span class="flagEmpty">X</span>')
 
-        if s.obj.sysno > 4095:
+        if sysobj.obj.sysno > 4095:
             # win32k system call
             ff.append('<span title="GUI" class="flagGUI">G</span>')
         else:
@@ -112,17 +112,27 @@ class HTMLOutputGenerator(output.OutputGenerator):
         h += """\
 <div class="sysbody">
   <table class="syssummary">
-    <tr><th>Process</th><td>PID 0x%04x, TID 0x%04x, name %s</td></tr>
-    <tr><th>Retval</th><td>0x%08x</td></tr>
+    <tr>
+        <th>Process</th><td>PID 0x%04x, TID 0x%04x, name %s</td>
+    </tr>
+    <tr>
+        <th>Retval</th>
+        <td>0x%08x <span class="comment">(taint label %d)</span></td>
+    </tr>
   </table>
 """  % (s.obj.process.pid, s.obj.process.tid, s.obj.process.name,
-        s.obj.retval)
+        s.obj.retval, s.obj.taintret)
 
-        h += """\
-<table class="sysargs">
-<tr><th>#</th><th>Address</th><th>Direction</th><th>Size</th><th>Offset</th><th>Taint</th><th>Input</th><th>Output</th></tr>
-"""
+        h += '<table class="sysargs">\n'
 
+        # Write table header
+        h += '<tr>'
+        for colname in ("#", "Address", "Direction", "Size", "Offset",
+                        "Uses", "Defs", "Input", "Output"):
+            h += "<th>%s</th>" % colname
+        h += '</tr>'
+
+        # Recursively visit sub-arguments
         for i in range(len(s.arguments)):
             arg = s.arguments[i]
             argpath = (i, )
@@ -134,24 +144,30 @@ class HTMLOutputGenerator(output.OutputGenerator):
         return h
 
     def _visitArgument(self, sysno, argpath, arg):
-        tainthtml = []
-        labels = list(arg.taintlabels)
-        labels.sort()
-        for label in labels:
-            t = '<span class="taint" onclick="javascript:gotoSyscall(%d);">%d</span>' % \
-                (label, label)
-            tainthtml.append(t)
-        tainthtml = ", ".join(tainthtml)
-
-        indata  = trace.syscall.SyscallArgument.stringifyData(arg.indata)
-        outdata = trace.syscall.SyscallArgument.stringifyData(arg.outdata)
+        indata = self.__generateData(arg.indata)
+        outdata = self.__generateData(arg.outdata)
         argno = ".".join(["%d" % x for x in argpath])
 
-        s = """<tr id="arg%d_%s"><td style="text-align: left;">%s</td><td>0x%08x</td><td>%s</td><td>%d</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td></tr>\n""" % \
-            (sysno, argno.replace(".", "_"),
-             argno, arg.obj.addr, arg.getDirectionName(),
-             arg.getSize(), arg.obj.offset, tainthtml,
-             indata, outdata)
+        s = '<tr id="arg%d_%s">' % (sysno, argno.replace(".", "_"))
+
+        # Argument number
+        s += '<td style="text-align:left;">%s</td>' % argno
+
+        # Address
+        s += '<td>0x%08x</td>' % arg.obj.addr
+
+        # Direction, size & offset
+        s += '<td>%s</td><td>%d</td><td>%d</td>' % (arg.getDirectionName(),
+                                                    arg.getSize(), arg.obj.offset)
+
+        # Taint labels (uses and defs)
+        s += "<td>%s</td><td>%s</td>" % (self.__generateTaintUses(arg),
+                                         self.__generateTaintDefs(arg))
+
+        # Input and output data
+        s += "<td>%s</td><td>%s</td>" % (indata, outdata)
+
+        s += "</tr>\n"
 
         for i in range(len(arg.pointers)):
             subarg = arg.pointers[i]
@@ -159,3 +175,42 @@ class HTMLOutputGenerator(output.OutputGenerator):
             s += self._visitArgument(sysno, subpath, subarg)
 
         return s
+
+    def __generateTaintUses(self, arg):
+        """
+        Generate HTML code to represent the taint labels _used_ by system call
+        argument "arg".
+        """
+
+        tainthtml = []
+        for label in arg.getTaintUses():
+            # Get the system call that defined this label
+            defobj = self.getSyscallFromLabel(label)
+            assert defobj is not None
+
+            data = '<span class="taint" title="Goto syscall #%d" ' \
+                   'onclick="javascript:gotoSyscall(%d);">%d</span>' % \
+                (defobj.obj.id, defobj.obj.id, label)
+            tainthtml.append(data)
+        return ", ".join(tainthtml)
+
+    def __generateTaintDefs(self, arg):
+        """
+        Generate HTML code to represent the taint labels _defined_ by system call
+        argument "arg".
+        """
+
+        tainthtml = []
+        for label in arg.getTaintDefs():
+            data = '<span class="taint">%d</span>' % label
+            tainthtml.append(data)
+        return ", ".join(tainthtml)
+
+    def __generateData(self, data):
+        """
+        Translate a syscall argument data buffer to an HTML string.
+        """
+        htmldata = trace.syscall.SyscallArgument.stringifyData(data)
+        if len(htmldata) > 128:
+            htmldata = htmldata[:128] + "..."
+        return htmldata

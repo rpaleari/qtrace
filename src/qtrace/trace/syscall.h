@@ -106,8 +106,8 @@ class SyscallArg {
   const std::string to_string(int argno, int indent) const;
 
 #ifdef CONFIG_QTRACE_TAINT
-  // Taint labels
-  std::set<int> taint_labels;
+  // Taint labels used (in) and defined (out) by this argument
+  std::set<int> taint_uses, taint_defs;
 #endif
 };
 
@@ -228,6 +228,11 @@ class Syscall {
   target_ulong pid;
   target_ulong tid;
   std::string  name;
+
+#ifdef CONFIG_QTRACE_TAINT
+  // Taint label associated with the syscall return value
+  int taint_retval;
+#endif
 
   // Convert a Syscall object to string, including its arguments
   const std::string to_string() const;

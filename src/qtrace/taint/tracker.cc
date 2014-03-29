@@ -7,10 +7,16 @@
 #include "qtrace/taint/notify_taint.h"
 #include "qtrace/taint/tracker.h"
 
-static void track_copy_labels(SyscallArg *arg) {
+static int current_taint_label = 0;
+
+static inline int get_new_label() {
+  return ++current_taint_label;
+}
+
+static void track_copy_input_labels(SyscallArg *arg) {
   hwaddr phyaddr = gbl_context.cb_va2phy(arg->addr);
   assert(phyaddr != static_cast<hwaddr>(-1));
-  gbl_context.taint_engine->copyMemoryLabels(arg->taint_labels,
+  gbl_context.taint_engine->copyMemoryLabels(arg->taint_uses,
                                              phyaddr, arg->getSize());
 }
 
@@ -41,7 +47,7 @@ static void track_syscall_arg(SyscallArg *arg, target_ulong label) {
             arg->addr, arg->addr + arg->getSize() - 1,
             gbl_context.cb_va2phy(arg->addr),
             gbl_context.cb_va2phy(arg->addr + arg->getSize() - 1));
-      track_copy_labels(arg);
+      track_copy_input_labels(arg);
     }
   }
 
@@ -53,7 +59,9 @@ static void track_syscall_arg(SyscallArg *arg, target_ulong label) {
   // Add new taint labels for OUT arguments
   if (arg->direction == DirectionOut &&
       arg->getSize() == sizeof(target_ulong)) {
-    notify_taint_memory(arg->addr, sizeof(target_ulong), label);
+    int newlabel = get_new_label();
+    arg->taint_defs.insert(newlabel);
+    notify_taint_memory(arg->addr, sizeof(target_ulong), newlabel);
   }
 
   // Recurse
@@ -70,10 +78,11 @@ void track_syscall_deps(Syscall &syscall) {
     notify_taint_clearM((*it)->addr, sizeof(target_ulong));
   }
 
-  // Add a taint label for the syscall return value
+  // Add a new taint label for the syscall return value
   target_ulong retreg;
   bool b = gbl_context.taint_engine->
     getRegisterIdByName(_XSTR(QTRACE_REG_SYSCALL_RESULT), retreg);
   assert(b == true);
-  notify_taint_register(false, retreg, syscall.id);
+  syscall.taint_retval = get_new_label();
+  notify_taint_register(false, retreg, syscall.taint_retval);
 }

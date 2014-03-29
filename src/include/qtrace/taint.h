@@ -5,9 +5,7 @@
 #ifndef SRC_INCLUDE_QTRACE_TAINT_H_
 #define SRC_INCLUDE_QTRACE_TAINT_H_
 
-/* Predefined taint labels */
-#define QTRACE_TAINT_LABEL_ENV 0xfffffffe
-#define QTRACE_TAINT_LABEL_ARG 0xfffffffd
+#include "labels.h"
 
 /* External variable that indicates whether taint propagation is currently
    enabled or not */
