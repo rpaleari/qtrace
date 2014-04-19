@@ -16,7 +16,7 @@ static inline int get_new_label() {
 static void track_copy_input_labels(SyscallArg *arg) {
   hwaddr phyaddr = gbl_context.cb_va2phy(arg->addr);
   assert(phyaddr != static_cast<hwaddr>(-1));
-  gbl_context.taint_engine->copyMemoryLabels(arg->taint_uses,
+  gbl_context.taint_engine->copyMemoryLabels(arg->taint_labels_in,
                                              phyaddr, arg->getSize());
 }
 
@@ -60,7 +60,7 @@ static void track_syscall_arg(SyscallArg *arg, target_ulong label) {
   if (arg->direction == DirectionOut &&
       arg->getSize() == sizeof(target_ulong)) {
     int newlabel = get_new_label();
-    arg->taint_defs.insert(newlabel);
+    arg->taint_labels_out.insert(newlabel);
     notify_taint_memory(arg->addr, sizeof(target_ulong), newlabel);
   }
 
@@ -83,6 +83,6 @@ void track_syscall_deps(Syscall &syscall) {
   bool b = gbl_context.taint_engine->
     getRegisterIdByName(_XSTR(QTRACE_REG_SYSCALL_RESULT), retreg);
   assert(b == true);
-  syscall.taint_retval = get_new_label();
-  notify_taint_register(false, retreg, syscall.taint_retval);
+  syscall.taint_label_retval = get_new_label();
+  notify_taint_register(false, retreg, syscall.taint_label_retval);
 }

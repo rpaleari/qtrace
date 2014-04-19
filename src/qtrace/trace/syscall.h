@@ -107,7 +107,7 @@ class SyscallArg {
 
 #ifdef CONFIG_QTRACE_TAINT
   // Taint labels used (in) and defined (out) by this argument
-  std::set<int> taint_uses, taint_defs;
+  std::set<int> taint_labels_in, taint_labels_out;
 #endif
 };
 
@@ -231,7 +231,7 @@ class Syscall {
 
 #ifdef CONFIG_QTRACE_TAINT
   // Taint label associated with the syscall return value
-  int taint_retval;
+  int taint_label_retval;
 #endif
 
   // Convert a Syscall object to string, including its arguments

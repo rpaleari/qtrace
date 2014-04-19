@@ -28,7 +28,7 @@ Syscall::Syscall(unsigned int param_id, target_ulong param_sysno,
   // Initially associate an invalid taint label to the system call return
   // value. This is useful also in case taint-tracking is temporarily disabled
   // by the user
-  taint_retval = QTRACE_TAINT_LABEL_INVALID;
+  taint_label_retval = QTRACE_TAINT_LABEL_INVALID;
 #endif
 }
 
@@ -457,8 +457,8 @@ const std::string SyscallArg::to_string(int argno, int indent) const {
       << ", direction? " << SyscallArg::directionToString(direction)
       << ", offset: " << offset << ", size: " << getSize()
       << ", ptrs: " << ptrs.size()
-      << ", labels: IN " << taint_uses.size()
-      << " OUT " << taint_defs.size();
+      << ", labels: IN " << taint_labels_in.size()
+      << " OUT " << taint_labels_out.size();
 
   int i = 0;
   for (auto it = ptrs.begin(); it != ptrs.end(); it++) {
@@ -475,7 +475,7 @@ const std::string Syscall::to_string() const {
   oss << "Syscall " << gbl_context.windows->getSyscallName(sysno)
       << "(0x" << std::hex << sysno << "), "
       << "proc " << cr3 << " retval " << retval
-      << "(label 0x%)" << taint_retval
+      << "(label 0x%)" << taint_label_retval
       << ", " << std::dec << args.size() << " args";
 
   int i = 0;

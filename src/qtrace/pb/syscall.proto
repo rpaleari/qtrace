@@ -39,7 +39,7 @@ message Syscall {
   repeated ExternalReference ref = 6;
 
   // Optional taint label associated with the system call return address
-  optional uint32 taintret = 7;
+  optional uint32 taintlabel_retval = 7;
 }
 
 message DataInterval {
@@ -72,10 +72,10 @@ message SyscallArg {
   repeated SyscallArg ptr  = 6;
 
   // Taint labels used by this argument
-  repeated uint32 taintuses = 7;
+  repeated uint32 taintlabels_in = 7;
 
   // Taint labels defined by this argument
-  repeated uint32 taintdefs = 8;
+  repeated uint32 taintlabels_out = 8;
 }
 
 // External data pointers, referenced during syscall execution but not

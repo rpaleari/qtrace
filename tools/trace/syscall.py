@@ -252,10 +252,15 @@ class SyscallArgument(object):
                  self.getSize(), self.allocation.raw.encode("hex"))
 
         # Add taint labels
-        if len(self.taintlabels) > 0:
-            labels = list(self.taintlabels)
+        if len(self.taintdefs) > 0:
+            labels = list(self.taintdefs)
             labels.sort()
-            s += ", taint %s" % labels
+            s += ", def %s" % labels
+
+        if len(self.taintuses) > 0:
+            labels = list(self.taintuses)
+            labels.sort()
+            s += ", use %s" % labels
 
         # Add indentation and EOL
         s = "%s%s\n" % (" "*((indent+1)*2), s)
