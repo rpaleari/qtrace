@@ -92,7 +92,7 @@ class Syscall(object):
         """
         Return a sorted list of taint labels _defined_ by this system call.
         """
-        labels = set([self.obj.taintret])
+        labels = set([self.obj.taintlabel_retval])
         for i in range(len(self.arguments)):
             labels |= self.arguments[i].getTaintDefs()
         labels = list(labels)

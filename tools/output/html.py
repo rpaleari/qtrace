@@ -121,7 +121,7 @@ class HTMLOutputGenerator(output.OutputGenerator):
     </tr>
   </table>
 """  % (s.obj.process.pid, s.obj.process.tid, s.obj.process.name,
-        s.obj.retval, s.obj.taintret)
+        s.obj.retval, s.obj.taintlabel_retval)
 
         h += '<table class="sysargs">\n'
 
