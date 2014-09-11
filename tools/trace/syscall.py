@@ -138,8 +138,8 @@ class SyscallArgument(object):
         self.outdata = collapse_intervals(self.obj.outdata)
 
         # Process taint labels
-        self.taintuses = set(self.obj.taintuses)
-        self.taintdefs = set(self.obj.taintdefs)
+        self.taintuses = set(self.obj.taintlabels_in)
+        self.taintdefs = set(self.obj.taintlabels_out)
 
     def allocate(self):
         """
@@ -201,7 +201,7 @@ class SyscallArgument(object):
         """
         Return a set of taint labels _used_ by this syscall argument.
         """
-        labels = set(self.obj.taintuses)
+        labels = set(self.obj.taintlabels_in)
         for i in range(len(self.pointers)):
             labels |= self.pointers[i].getTaintUses()
         return labels
@@ -210,7 +210,7 @@ class SyscallArgument(object):
         """
         Return a set of taint labels _defined_ by this syscall argument.
         """
-        labels = set(self.obj.taintdefs)
+        labels = set(self.obj.taintlabels_out)
         for i in range(len(self.pointers)):
             labels |= self.pointers[i].getTaintDefs()
         return labels
