@@ -336,9 +336,9 @@ static const pci_dev_t hbrg_devices[] = {
     },
     {
         PCI_VENDOR_ID_MOTOROLA, PCI_DEVICE_ID_MOTOROLA_RAVEN, NULL,
-        "pci-bridge", "PREP Host PCI Bridge - Motorola Raven", NULL,
+        "pci", "PREP Host PCI Bridge - Motorola Raven", NULL,
         3, 2, 1,
-        NULL, NULL,
+        host_config_cb, NULL,
     },
     {
         PCI_VENDOR_ID_SUN, PCI_DEVICE_ID_SUN_SABRE, NULL,
@@ -390,6 +390,21 @@ static const pci_dev_t miscbrg_devices[] = {
     },
 };
 
+static const pci_dev_t isabrg_devices[] = {
+    {
+        PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82378, NULL,
+        "isa", "isa", "pci8086,484\0",
+        1, 1, 1,
+        i82378_config_cb, NULL,
+    },
+    {
+        0xFFFF, 0xFFFF,
+        NULL, NULL, NULL, NULL,
+        -1, -1, -1,
+        NULL, NULL,
+    },
+};
+
 static const pci_subclass_t bridg_subclass[] = {
     {
         PCI_SUBCLASS_BRIDGE_HOST, "PCI host bridge",
@@ -398,7 +413,7 @@ static const pci_subclass_t bridg_subclass[] = {
     },
     {
         PCI_SUBCLASS_BRIDGE_ISA, "ISA bridge",
-        NULL, NULL, NULL,
+        "isa", isabrg_devices, NULL,
         NULL, NULL,
     },
     {

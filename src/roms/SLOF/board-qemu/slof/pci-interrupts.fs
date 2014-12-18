@@ -1,17 +1,26 @@
 
 : pci-gen-irq-map-one ( prop-addr prop-len slot pin -- prop-addr prop-len )
-        2dup + 4 mod                                        ( prop-addr prop-len slot pin parentpin )
+        2dup + 4 mod                ( prop-addr prop-len slot pin parentpin )
+        >r >r                       ( prop-addr prop-len slot R: swizzledpin pin )
+
+        \ Child slot#
+        B lshift encode-int+        ( prop-addr prop-len R: swizzledpin pin )
+        \ Child 64bit BAR (not really used)
+        0 encode-64+
+        \ Chile pin#
+        r> encode-int+              ( prop-addr prop-len R: swizzledpin )
+
+        \ Parent phandle
+        get-parent encode-int+
+
+        \ Parent slot#
         get-node >space
-        pci-addr2dev + 1- 4 mod 1+  \ do swizzling          ( prop-addr prop-len slot pin swizzledpin )
-        >r >r >r                                            ( prop-addr prop-len R: swizzledpin pin slot )
-
-        r> B lshift encode-int+
-        0 encode-64+                \ device slot           ( prop-addr prop-len R: swizzledpin pin )
-        r> encode-int+              \ device pin            ( prop-addr prop-len R: swizzledpin )
-
-        get-parent encode-int+      \ parent phandle
-        0 encode-int+ 0 encode-64+  \ parent slot
-        r> encode-int+              \ parent swizzled pin   ( prop-addr prop-len R: )
+        pci-addr2dev B lshift       ( prop-addr prop-len parent-slot R: swizzledpin )
+        encode-int+
+        \ Parent 64bit BAR (not really used)
+        0 encode-64+
+        \ Parent pin
+        r> encode-int+              ( prop-addr prop-len R: )
 ;
 
 : pci-gen-irq-entry ( prop-addr prop-len config-addr -- prop-addr prop-len )

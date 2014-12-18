@@ -259,10 +259,12 @@ a CONSTANT VBE_DISPI_INDEX_NB
     frame-buffer-adr frame-buffer-adr 3
     screen-height screen-width * screen-depth * /x /
     1 hv-logical-memop
+    drop
 ;
 
 : hcall-blink-screen ( -- )
-    hcall-invert-screen hcall-invert-screen
+    \ 32 msec delay for visually noticing the blink
+    hcall-invert-screen 20 ms hcall-invert-screen
 ;
 
 : display-install ( -- )

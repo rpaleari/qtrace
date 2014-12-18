@@ -19,53 +19,8 @@
 
 #include "cpu.h"
 #include "exec/ioport.h"
-#include "helper.h"
-
-#if !defined(CONFIG_USER_ONLY)
-#include "exec/softmmu_exec.h"
-#endif /* !defined(CONFIG_USER_ONLY) */
-
-/* check if Port I/O is allowed in TSS */
-static inline void check_io(CPUX86State *env, int addr, int size)
-{
-    int io_offset, val, mask;
-
-    /* TSS must be a valid 32 bit one */
-    if (!(env->tr.flags & DESC_P_MASK) ||
-        ((env->tr.flags >> DESC_TYPE_SHIFT) & 0xf) != 9 ||
-        env->tr.limit < 103) {
-        goto fail;
-    }
-    io_offset = cpu_lduw_kernel(env, env->tr.base + 0x66);
-    io_offset += (addr >> 3);
-    /* Note: the check needs two bytes */
-    if ((io_offset + 1) > env->tr.limit) {
-        goto fail;
-    }
-    val = cpu_lduw_kernel(env, env->tr.base + io_offset);
-    val >>= (addr & 7);
-    mask = (1 << size) - 1;
-    /* all bits must be zero to allow the I/O */
-    if ((val & mask) != 0) {
-    fail:
-        raise_exception_err(env, EXCP0D_GPF, 0);
-    }
-}
-
-void helper_check_iob(CPUX86State *env, uint32_t t0)
-{
-    check_io(env, t0, 1);
-}
-
-void helper_check_iow(CPUX86State *env, uint32_t t0)
-{
-    check_io(env, t0, 2);
-}
-
-void helper_check_iol(CPUX86State *env, uint32_t t0)
-{
-    check_io(env, t0, 4);
-}
+#include "exec/helper-proto.h"
+#include "exec/cpu_ldst.h"
 
 void helper_outb(uint32_t port, uint32_t data)
 {
@@ -155,7 +110,7 @@ target_ulong helper_read_crN(CPUX86State *env, int reg)
         break;
     case 8:
         if (!(env->hflags2 & HF2_VINTR_MASK)) {
-            val = cpu_get_apic_tpr(env->apic_state);
+            val = cpu_get_apic_tpr(x86_env_get_cpu(env)->apic_state);
         } else {
             val = env->v_tpr;
         }
@@ -179,7 +134,7 @@ void helper_write_crN(CPUX86State *env, int reg, target_ulong t0)
         break;
     case 8:
         if (!(env->hflags2 & HF2_VINTR_MASK)) {
-            cpu_set_apic_tpr(env->apic_state, t0);
+            cpu_set_apic_tpr(x86_env_get_cpu(env)->apic_state, t0);
         }
         env->v_tpr = t0 & 0x0f;
         break;
@@ -221,8 +176,10 @@ void helper_lmsw(CPUX86State *env, target_ulong t0)
 
 void helper_invlpg(CPUX86State *env, target_ulong addr)
 {
+    X86CPU *cpu = x86_env_get_cpu(env);
+
     cpu_svm_check_intercept_param(env, SVM_EXIT_INVLPG, 0);
-    tlb_flush_page(env, addr);
+    tlb_flush_page(CPU(cpu), addr);
 }
 
 void helper_rdtsc(CPUX86State *env)
@@ -286,7 +243,7 @@ void helper_wrmsr(CPUX86State *env)
         env->sysenter_eip = val;
         break;
     case MSR_IA32_APICBASE:
-        cpu_set_apic_base(env->apic_state, val);
+        cpu_set_apic_base(x86_env_get_cpu(env)->apic_state, val);
         break;
     case MSR_EFER:
         {
@@ -437,7 +394,7 @@ void helper_rdmsr(CPUX86State *env)
         val = env->sysenter_eip;
         break;
     case MSR_IA32_APICBASE:
-        val = cpu_get_apic_base(env->apic_state);
+        val = cpu_get_apic_base(x86_env_get_cpu(env)->apic_state);
         break;
     case MSR_EFER:
         val = env->efer;
@@ -566,6 +523,15 @@ void helper_rdmsr(CPUX86State *env)
 }
 #endif
 
+static void do_pause(X86CPU *cpu)
+{
+    CPUState *cs = CPU(cpu);
+
+    /* Just let another CPU run.  */
+    cs->exception_index = EXCP_INTERRUPT;
+    cpu_loop_exit(cs);
+}
+
 static void do_hlt(X86CPU *cpu)
 {
     CPUState *cs = CPU(cpu);
@@ -573,8 +539,8 @@ static void do_hlt(X86CPU *cpu)
 
     env->hflags &= ~HF_INHIBIT_IRQ_MASK; /* needed if sti is just before */
     cs->halted = 1;
-    env->exception_index = EXCP_HLT;
-    cpu_loop_exit(env);
+    cs->exception_index = EXCP_HLT;
+    cpu_loop_exit(cs);
 }
 
 void helper_hlt(CPUX86State *env, int next_eip_addend)
@@ -610,16 +576,27 @@ void helper_mwait(CPUX86State *env, int next_eip_addend)
     cpu = x86_env_get_cpu(env);
     cs = CPU(cpu);
     /* XXX: not complete but not completely erroneous */
-    if (cs->cpu_index != 0 || cs->next_cpu != NULL) {
-        /* more than one CPU: do not sleep because another CPU may
-           wake this one */
+    if (cs->cpu_index != 0 || CPU_NEXT(cs) != NULL) {
+        do_pause(cpu);
     } else {
         do_hlt(cpu);
     }
 }
 
+void helper_pause(CPUX86State *env, int next_eip_addend)
+{
+    X86CPU *cpu = x86_env_get_cpu(env);
+
+    cpu_svm_check_intercept_param(env, SVM_EXIT_PAUSE, 0);
+    env->eip += next_eip_addend;
+
+    do_pause(cpu);
+}
+
 void helper_debug(CPUX86State *env)
 {
-    env->exception_index = EXCP_DEBUG;
-    cpu_loop_exit(env);
+    CPUState *cs = CPU(x86_env_get_cpu(env));
+
+    cs->exception_index = EXCP_DEBUG;
+    cpu_loop_exit(cs);
 }

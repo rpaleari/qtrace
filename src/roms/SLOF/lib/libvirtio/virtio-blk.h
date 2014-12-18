@@ -21,9 +21,7 @@
 #include <stdint.h>
 
 
-/* Device configuration layout */
-/*
-struct virtio_blk_config {
+struct virtio_blk_cfg {
 	uint64_t	capacity;
 	uint32_t	size_max;
 	uint32_t	seg_max;
@@ -34,8 +32,7 @@ struct virtio_blk_config {
 	} geometry;
 	uint32_t	blk_size;
 	uint32_t	sectors_max;
-};
-*/
+} __attribute__ ((packed)) ;
 
 /* Block request */
 struct virtio_blk_req {
@@ -52,6 +49,9 @@ struct virtio_blk_req {
 #define VIRTIO_BLK_T_FLUSH		4
 #define VIRTIO_BLK_T_FLUSH_OUT		5
 #define VIRTIO_BLK_T_BARRIER		0x80000000
+
+/* VIRTIO_BLK Feature bits */
+#define VIRTIO_BLK_F_BLK_SIZE       (1 << 6)
 
 extern int virtioblk_init(struct virtio_device *dev);
 extern void virtioblk_shutdown(struct virtio_device *dev);

@@ -13,9 +13,10 @@
 #include <netlib/tftp.h>
 #include <netlib/ethernet.h>
 #include <netlib/dhcp.h>
-//#include <netlib/dhcpv6.h>
+#include <netlib/dhcpv6.h>
 #include <netlib/ipv4.h>
-//#include <netlib/ipv6.h>
+#include <netlib/ipv6.h>
+#include <netlib/dns.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
@@ -26,14 +27,14 @@
 #include <of.h>
 #include "netapps.h"
 
-#define IP_INIT_DEFAULT 2
+#define IP_INIT_DEFAULT 5
 #define IP_INIT_NONE    0
 #define IP_INIT_BOOTP   1
 #define IP_INIT_DHCP    2
 #define IP_INIT_DHCPV6_STATELESS    3
 #define IP_INIT_IPV6_MANUAL         4
 
-#define DEFAULT_BOOT_RETRIES 600
+#define DEFAULT_BOOT_RETRIES 10
 #define DEFAULT_TFTP_RETRIES 20
 static int ip_version = 4;
 
@@ -41,11 +42,11 @@ typedef struct {
 	char filename[100];
 	int  ip_init;
 	char siaddr[4];
-	//ip6_addr_t si6addr;
+	ip6_addr_t si6addr;
 	char ciaddr[4];
-	//ip6_addr_t ci6addr;
+	ip6_addr_t ci6addr;
 	char giaddr[4];
-	//ip6_addr_t gi6addr;
+	ip6_addr_t gi6addr;
 	int  bootp_retries;
 	int  tftp_retries;
 } obp_tftp_args_t;
@@ -60,7 +61,6 @@ typedef struct {
  * @param  obp_tftp_args  structure which contains the result
  * @return                updated arg_str
  */
-/*
 static const char * 
 parse_ipv6args (const char *arg_str, unsigned int argc,
 		obp_tftp_args_t *obp_tftp_args)
@@ -73,7 +73,7 @@ parse_ipv6args (const char *arg_str, unsigned int argc,
 		memset(&obp_tftp_args->si6addr.addr, 0, 16);
 	else {
 		argncpy(arg_str, 0, arg_buf, 100);
-		if(parseip6(arg_buf, (uint8_t *) &(obp_tftp_args->si6addr.addr[0]))) {
+		if(str_to_ipv6(arg_buf, (uint8_t *) &(obp_tftp_args->si6addr.addr[0]))) {
 			arg_str = get_arg_ptr(arg_str, 1);
 			--argc;
 		}
@@ -104,7 +104,7 @@ parse_ipv6args (const char *arg_str, unsigned int argc,
 		memset(&obp_tftp_args->ci6addr, 0, 16);
 	else {
 		argncpy(arg_str, 0, arg_buf, 100);
-		if (parseip6(arg_buf, (uint8_t *) &(obp_tftp_args->ci6addr.addr)) ) {
+		if (str_to_ipv6(arg_buf, (uint8_t *) &(obp_tftp_args->ci6addr.addr[0]))) {
 			arg_str = get_arg_ptr(arg_str, 1);
 			--argc;
 		}
@@ -122,7 +122,7 @@ parse_ipv6args (const char *arg_str, unsigned int argc,
 		memset(&obp_tftp_args->gi6addr, 0, 16);
 	else {
 		argncpy(arg_str, 0, arg_buf, 100);
-		if (parseip6(arg_buf, (uint8_t *) &(obp_tftp_args->gi6addr.addr)) ) {
+		if (str_to_ipv6(arg_buf, (uint8_t *) &(obp_tftp_args->gi6addr.addr)) ) {
 			arg_str = get_arg_ptr(arg_str, 1);
 			--argc;
 		}
@@ -137,7 +137,6 @@ parse_ipv6args (const char *arg_str, unsigned int argc,
 
 	return arg_str;
 }
-*/
 
 
 /**
@@ -242,6 +241,8 @@ parse_args(const char *arg_str, obp_tftp_args_t *obp_tftp_args)
 	unsigned int argc;
 	char arg_buf[100];
 
+	memset(obp_tftp_args, 0, sizeof(*obp_tftp_args));
+
 	argc = get_args_count(arg_str);
 
 	// find out if we should use BOOTP or DHCP
@@ -272,11 +273,9 @@ parse_args(const char *arg_str, obp_tftp_args_t *obp_tftp_args)
 	if (ip_version == 4) {
 		arg_str = parse_ipv4args (arg_str, argc, obp_tftp_args);
 	}
-/*
 	else if (ip_version == 6) {
 		arg_str = parse_ipv6args (arg_str, argc, obp_tftp_args);
 	}
-*/
 
 	// find out bootp-retries
 	if (argc == 0)
@@ -311,6 +310,63 @@ parse_args(const char *arg_str, obp_tftp_args_t *obp_tftp_args)
 	}
 }
 
+/**
+ * DHCP: Wrapper for obtaining IP and configuration info from DHCP server
+ *       for both IPv4 and IPv6.
+ *       (makes several attempts).
+ *
+ * @param  ret_buffer    buffer for returning BOOTP-REPLY packet data
+ * @param  fn_ip         contains the following configuration information:
+ *                       client MAC, client IP, TFTP-server MAC,
+ *                       TFTP-server IP, Boot file name
+ * @param  retries       No. of DHCP attempts
+ * @param  flags         flags for specifying type of dhcp attempt (IPv4/IPv6)
+ *                       ZERO   - attempt DHCPv4 followed by DHCPv6
+ *                       F_IPV4 - attempt only DHCPv4
+ *                       F_IPV6 - attempt only DHCPv6
+ * @return               ZERO - IP and configuration info obtained;
+ *                       NON ZERO - error condition occurs.
+ */
+int dhcp(char *ret_buffer, filename_ip_t * fn_ip, unsigned int retries, int flags)
+{
+	int i = (int) retries+1;
+	int rc = -1;
+
+	printf("    ");
+
+	do {
+		printf("\b\b\b%03d", i-1);
+		if (getchar() == 27) {
+			printf("\nAborted\n");
+			return -1;
+		}
+		if (!--i) {
+			printf("\nGiving up after %d DHCP requests\n", retries);
+			return -1;
+		}
+		if (!flags || (flags == F_IPV4)) {
+			ip_version = 4;
+			rc = dhcpv4(ret_buffer, fn_ip);
+		}
+		if ((!flags && (rc == -1)) || (flags == F_IPV6)) {
+			ip_version = 6;
+			set_ipv6_address(0);
+			rc = dhcpv6(ret_buffer, fn_ip);
+			if (rc == 0) {
+				printf("\n");
+				memcpy(&fn_ip->own_ip6, get_ipv6_address(), 16);
+				break;
+			}
+
+		}
+		if (rc != -1) /* either success or non-dhcp failure */
+			break;
+	} while (1);
+	printf("\b\b\b\b");
+
+	return rc;
+}
+
 int
 netboot(int argc, char *argv[])
 {
@@ -324,12 +380,10 @@ netboot(int argc, char *argv[])
 	tftp_err_t tftp_err;
 	obp_tftp_args_t obp_tftp_args;
 	char null_ip[4] = { 0x00, 0x00, 0x00, 0x00 };
-/*
 	char null_ip6[16] = { 0x00, 0x00, 0x00, 0x00,
 			     0x00, 0x00, 0x00, 0x00,
 			     0x00, 0x00, 0x00, 0x00, 
 			     0x00, 0x00, 0x00, 0x00 };
-*/
 	int huge_load = strtol(argv[4], 0, 10);
 	int32_t block_size = strtol(argv[5], 0, 10);
 	uint8_t own_mac[6];
@@ -411,21 +465,20 @@ netboot(int argc, char *argv[])
 			obp_tftp_args.ip_init = IP_INIT_NONE;
 		}
 	}
-/*
 	else if (ip_version == 6) {
 		if (memcmp(&obp_tftp_args.ci6addr, null_ip6, 16) != 0
 		    && memcmp(&obp_tftp_args.si6addr, null_ip6, 16) != 0
 		    && obp_tftp_args.filename[0] != 0) {
 
-			memcpy(&fn_ip.server_ip6.addr[0], 
+			memcpy(&fn_ip.server_ip6.addr[0],
 			       &obp_tftp_args.si6addr.addr, 16);
 			obp_tftp_args.ip_init = IP_INIT_IPV6_MANUAL;
-		} 
+		}
 		else {
 			obp_tftp_args.ip_init = IP_INIT_DHCPV6_STATELESS;
 		}
 	}
-*/
+
 	// construction of fn_ip from parameter
 	switch(obp_tftp_args.ip_init) {
 	case IP_INIT_BOOTP:
@@ -444,18 +497,21 @@ netboot(int argc, char *argv[])
 		rc = bootp(ret_buffer, &fn_ip, obp_tftp_args.bootp_retries);
 		break;
 	case IP_INIT_DHCP:
-		printf("  Requesting IP address via DHCP: ");
-		rc = dhcp(ret_buffer, &fn_ip, obp_tftp_args.bootp_retries);
+		printf("  Requesting IP address via DHCPv4: ");
+		rc = dhcp(ret_buffer, &fn_ip, obp_tftp_args.bootp_retries, F_IPV4);
 		break;
-/*
 	case IP_INIT_DHCPV6_STATELESS:
-		set_ipv6_address(0);
-		rc = do_dhcpv6 (ret_buffer, &fn_ip, 10, DHCPV6_STATELESS);
+		printf("  Requesting information via DHCPv6: ");
+		rc = dhcp(ret_buffer, &fn_ip,
+			  obp_tftp_args.bootp_retries, F_IPV6);
 		break;
 	case IP_INIT_IPV6_MANUAL:
 		set_ipv6_address(&obp_tftp_args.ci6addr);
 		break;
-*/
+	case IP_INIT_DEFAULT:
+		printf("  Requesting IP address via DHCP: ");
+		rc = dhcp(ret_buffer, &fn_ip, obp_tftp_args.bootp_retries, 0);
+		break;
 	case IP_INIT_NONE:
 	default:
 		break;
@@ -473,7 +529,6 @@ netboot(int argc, char *argv[])
 		// init IPv4 layer
 		set_ipv4_address(fn_ip.own_ip);
 	}
-/*
 	else if (rc >= 0 && ip_version == 6) {
 		if(memcmp(&obp_tftp_args.ci6addr.addr, null_ip6, 16) != 0
 		&& memcmp(&obp_tftp_args.ci6addr.addr, &fn_ip.own_ip6, 16) != 0)
@@ -483,7 +538,6 @@ netboot(int argc, char *argv[])
 		&& memcmp(&obp_tftp_args.si6addr.addr, &fn_ip.server_ip6.addr, 16) != 0)
 			memcpy(&fn_ip.server_ip6.addr, &obp_tftp_args.si6addr.addr, 16);
 	}
-*/
 	if (rc == -1) {
 		strcpy(buf,"E3001: (net) Could not get IP address");
 		bootmsg_error(0x3001, &buf[7]);
@@ -492,9 +546,10 @@ netboot(int argc, char *argv[])
 		return -101;
 	}
 
-	printf("%d.%d.%d.%d\n",
-	       ((fn_ip.own_ip >> 24) & 0xFF), ((fn_ip.own_ip >> 16) & 0xFF),
-	       ((fn_ip.own_ip >>  8) & 0xFF), ( fn_ip.own_ip        & 0xFF));
+	if(ip_version == 4)
+		printf("%d.%d.%d.%d\n",
+			((fn_ip.own_ip >> 24) & 0xFF), ((fn_ip.own_ip >> 16) & 0xFF),
+			((fn_ip.own_ip >>  8) & 0xFF), ( fn_ip.own_ip        & 0xFF));
 
 	if (rc == -2) {
 		sprintf(buf,
@@ -529,12 +584,19 @@ netboot(int argc, char *argv[])
 		fn_ip.filename[sizeof(fn_ip.filename)-1] = 0;
 	}
 
-	printf("  Requesting file \"%s\" via TFTP from %d.%d.%d.%d\n",
-		fn_ip.filename,
-		((fn_ip.server_ip >> 24) & 0xFF),
-		((fn_ip.server_ip >> 16) & 0xFF),
-		((fn_ip.server_ip >>  8) & 0xFF),
-		( fn_ip.server_ip        & 0xFF));
+	if (ip_version == 4) {
+		printf("  Requesting file \"%s\" via TFTP from %d.%d.%d.%d\n",
+			fn_ip.filename,
+			((fn_ip.server_ip >> 24) & 0xFF),
+			((fn_ip.server_ip >> 16) & 0xFF),
+			((fn_ip.server_ip >>  8) & 0xFF),
+			( fn_ip.server_ip        & 0xFF));
+	} else if (ip_version == 6) {
+		char ip6_str[40];
+		printf("  Requesting file \"%s\" via TFTP from ", fn_ip.filename);
+		ipv6_to_str(fn_ip.server_ip6.addr, ip6_str);
+		printf("%s\n", ip6_str);
+	}
 
 	// accept at most 20 bad packets
 	// wait at most for 40 packets
@@ -660,4 +722,107 @@ netboot(int argc, char *argv[])
 		return -115;
 	}
 	return rc;
+}
+
+/**
+ * Parses a tftp arguments, extracts all
+ * parameters and fills server ip according to this
+ *
+ * Parameters:
+ * @param  buffer        string with arguments,
+ * @param  server_ip	 server ip as result
+ * @param  filename	 default filename
+ * @param  len            len of the buffer,
+ * @return               0 on SUCCESS and -1 on failure
+ */
+int parse_tftp_args(char buffer[], char *server_ip, char filename[], int len)
+{
+	char *raw;
+	char *tmp, *tmp1;
+	int i, j = 0;
+	char domainname[256];
+	uint8_t server_ip6[16];
+
+	raw = malloc(len);
+	if (raw == NULL) {
+		printf("\n unable to allocate memory, parsing failed\n");
+		return -1;
+	}
+	strncpy(raw,(const char *)buffer,len);
+	/*tftp url contains tftp://[fd00:4f53:4444:90:214:5eff:fed9:b200]/testfile*/
+	if(strncmp(raw,"tftp://",7)){
+		printf("\n tftp missing in %s\n",raw);
+		free(raw);
+		return -1;
+	}
+	tmp = strchr(raw,'[');
+	if(tmp != NULL && *tmp == '[') {
+		/*check for valid ipv6 address*/
+		tmp1 = strchr(tmp,']');
+		if (tmp1 == NULL) {
+			printf("\n missing ] in %s\n",raw);
+			free(raw);
+			return -1;
+		}
+		i = tmp1 - tmp;
+		/*look for file name*/
+		tmp1 = strchr(tmp,'/');
+		if (tmp1 == NULL) {
+			printf("\n missing filename in %s\n",raw);
+			free(raw);
+			return -1;
+		}
+		tmp[i] = '\0';
+		/*check for 16 byte ipv6 address */
+		if (!str_to_ipv6((tmp+1), (uint8_t *)(server_ip))) {
+			printf("\n wrong format IPV6 address in %s\n",raw);
+			free(raw);
+			return -1;;
+		}
+		else {
+			/*found filename */
+			strcpy(filename,(tmp1+1));
+			free(raw);
+			return 0;
+		}
+	}
+	else {
+		/*here tftp://hostname/testfile from option request of dhcp*/
+		/*look for dns server name */
+		tmp1 = strchr(raw,'.');
+		if(tmp1 == NULL) {
+			printf("\n missing . seperator in %s\n",raw);
+			free(raw);
+			return -1;
+		}
+		/*look for domain name beyond dns server name
+		* so ignore the current . and look for one more
+		*/
+		tmp = strchr((tmp1+1),'.');
+		if(tmp == NULL) {
+			printf("\n missing domain in %s\n",raw);
+			free(raw);
+			return -1;
+		}
+		tmp1 = strchr(tmp1,'/');
+		if (tmp1 == NULL) {
+			printf("\n missing filename in %s\n",raw);
+			free(raw);
+			return -1;
+		}
+		j = tmp1 - (raw + 7);
+		tmp = raw + 7;
+		tmp[j] = '\0';
+		strcpy(domainname, tmp);
+		if (dns_get_ip((int8_t *)domainname, server_ip6, 6) == 0) {
+			printf("\n DNS failed for IPV6\n");
+                        return -1;
+                }
+		ipv6_to_str(server_ip6, server_ip);
+
+		strcpy(filename,(tmp1+1));
+		free(raw);
+		return 0;
+	}
+
 }

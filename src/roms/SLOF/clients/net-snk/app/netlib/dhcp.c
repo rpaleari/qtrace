@@ -77,6 +77,7 @@
 #define DHCP_REQUEST_LIST     55
 #define DHCP_TFTP_SERVER      66
 #define DHCP_BOOTFILE         67
+#define DHCP_CLIENT_ARCH      93
 #define DHCP_ENDOPT         0xFF
 #define DHCP_PADOPT         0x00
 
@@ -90,6 +91,14 @@
 #define DHCP_STATE_REQUEST     2
 #define DHCP_STATE_SUCCESS     3
 #define DHCP_STATE_FAULT       4
+
+/* DHCP Client Architecture */
+#ifndef DHCPARCH
+#define USE_DHCPARCH 0
+#define DHCPARCH 0
+#else
+#define USE_DHCPARCH 1
+#endif
 
 static uint8_t dhcp_magic[] = {0x63, 0x82, 0x53, 0x63};
 /**< DHCP_magic is a cookie, that identifies DHCP options (see RFC 2132) */
@@ -116,6 +125,7 @@ typedef struct {
 	uint8_t    overload;          /**< o.52 Overload sname/file fields     */
 	int8_t     tftp_server[256];  /**< o.66 TFTP server name               */
 	int8_t     bootfile[256];     /**< o.67 Boot file name                 */
+	uint16_t   client_arch;       /**< o.93 Client architecture type       */
 } dhcp_options_t;
 
 /** Stores state of DHCP-client (refer to State-transition diagram) */
@@ -173,20 +183,8 @@ static char   * response_buffer;
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>> IMPLEMENTATION <<<<<<<<<<<<<<<<<<<<<<<<<<<*/
 
-/**
- * DHCP: Obtains IP and configuration info from DHCP server
- *       (makes several attempts).
- *
- * @param  boot_device   a socket number used to send and receive packets
- * @param  fn_ip         contains the following configuration information:
- *                       client MAC, client IP, TFTP-server MAC, 
- *                       TFTP-server IP, Boot file name
- * @return               ZERO - IP and configuration info obtained;
- *                       NON ZERO - error condition occurs.
- */
 int32_t
-dhcp(char *ret_buffer, filename_ip_t * fn_ip, unsigned int retries) {
-	int i = (int) retries+1;
+dhcpv4(char *ret_buffer, filename_ip_t * fn_ip) {
 
 	uint32_t dhcp_tftp_ip     = 0;
 	strcpy((char *) dhcp_filename, "");
@@ -194,20 +192,8 @@ dhcp(char *ret_buffer, filename_ip_t * fn_ip, unsigned int retries) {
 
 	response_buffer = ret_buffer;
 
-	printf("    ");
-
-	do {
-		printf("\b\b\b%03d", i-1);
-		if (getchar() == 27) {
-			printf("\nAborted\n");
-			return -1;
-		}
-		if (!--i) {
-			printf("\nGiving up after %d DHCP requests\n", retries);
-			return -1;
-		}
-	} while (!dhcp_attempt());
-	printf("\b\b\b\b");
+	if (dhcp_attempt() == 0)
+		return -1;
 
 	if (fn_ip->own_ip) {
 		dhcp_own_ip = fn_ip->own_ip;
@@ -232,7 +218,7 @@ dhcp(char *ret_buffer, filename_ip_t * fn_ip, unsigned int retries) {
 	else {
 		// TFTP server defined by its name
 		if (!strtoip(dhcp_tftp_name, &(dhcp_tftp_ip))) {
-			if (!dns_get_ip(dhcp_tftp_name, &(dhcp_tftp_ip))) {
+			if (!dns_get_ip(dhcp_tftp_name, (uint8_t *)&(dhcp_tftp_ip), 4)) {
 				// DNS error - can't obtain TFTP-server name  
 				// Use TFTP-ip from siaddr field, if presented
 				if (dhcp_siaddr_ip) {
@@ -373,6 +359,14 @@ dhcp_encode_options(uint8_t * opt_field, dhcp_options_t * opt_struct) {
 		options += options[1] + 2;
 	}
 
+	if (opt_struct -> flag[DHCP_CLIENT_ARCH]) {
+		options[0] = DHCP_CLIENT_ARCH;
+		options[1] = 2;
+		options[2] = (DHCPARCH >> 8);
+		options[3] = DHCPARCH & 0xff;
+		options += 4;
+	}
+
 	// end options
 	options[0] = 0xFF;
 	options++;
@@ -460,6 +454,11 @@ dhcp_decode_options(uint8_t opt_field[], uint32_t opt_len,
 			memcpy(opt_struct ->  bootfile, opt_field + offset + 2, opt_field[offset + 1]);
 			(opt_struct -> bootfile)[opt_field[offset + 1]] = 0;
 			offset += 2 + opt_field[offset + 1];
+			break;
+
+		case DHCP_CLIENT_ARCH :
+			opt_struct -> client_arch = ((opt_field[offset + 2] << 8) & 0xFF00) | (opt_field[offset + 3] & 0xFF);
+			offset += 4;
 			break;
 
 		case DHCP_PADOPT :
@@ -637,6 +636,7 @@ dhcp_send_discover(void) {
 	opt.request_list[DHCP_ROUTER] = 1;
 	opt.request_list[DHCP_TFTP_SERVER] = 1;
 	opt.request_list[DHCP_BOOTFILE] = 1;
+	opt.request_list[DHCP_CLIENT_ARCH] = USE_DHCPARCH;
 
 	dhcp_encode_options(btph -> vend, &opt);
 
@@ -683,6 +683,8 @@ dhcp_send_request(void) {
 	opt.request_list[DHCP_ROUTER] = 1;
 	opt.request_list[DHCP_TFTP_SERVER] = 1;
 	opt.request_list[DHCP_BOOTFILE] = 1;
+	opt.request_list[DHCP_CLIENT_ARCH] = USE_DHCPARCH;
+	opt.flag[DHCP_CLIENT_ARCH] = USE_DHCPARCH;
 
 	dhcp_encode_options(btph -> vend, &opt);
 
@@ -760,13 +762,6 @@ handle_dhcp(uint8_t * packet, int32_t packetsize) {
 	      sizeof(struct iphdr);
 	if (btph -> op != 2)
 		return -1; // it is not Boot Reply
-
-	if(response_buffer) {
-		if(packetsize <= 1720)
-			memcpy(response_buffer, packet, packetsize);
-		else
-			memcpy(response_buffer, packet, 1720);
-	}
 
 	if (memcmp(btph -> vend, dhcp_magic, 4)) {
 		// It is BootP - RFC 951
@@ -930,6 +925,13 @@ handle_dhcp(uint8_t * packet, int32_t packetsize) {
 		// to be able to answer for foreign requests
 		set_ipv4_address(dhcp_own_ip);
 
+		if(response_buffer) {
+			if(packetsize <= 1720)
+				memcpy(response_buffer, packet, packetsize);
+			else
+				memcpy(response_buffer, packet, 1720);
+		}
+
 		/* Subnet mask */
 		if (opt.flag[DHCP_MASK]) {
 			/* Router */
@@ -941,7 +943,7 @@ handle_dhcp(uint8_t * packet, int32_t packetsize) {
 
 		/* DNS-server */
 		if (opt.flag[DHCP_DNS]) {
-			dns_init(opt.dns_IP);
+			dns_init(opt.dns_IP, 0, 4);
 		}
 	}
 

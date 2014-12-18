@@ -11,6 +11,7 @@
 \ ****************************************************************************/
 
 0 VALUE fdt-debug
+TRUE VALUE fdt-cas-fix?
 
 \ Bail out if no fdt
 fdt-start 0 = IF -1 throw THEN
@@ -36,14 +37,21 @@ h#        4 constant OF_DT_NOP
 h#        9 constant OF_DT_END
 
 \ Create some variables early
-fdt-start
-dup dup >fdth_struct_off l@ + value fdt-struct
-dup dup >fdth_string_off l@ + value fdt-strings
-drop
+0 value fdt-start-addr
+0 value fdt-struct
+0 value fdt-strings
+
+: fdt-init ( fdt-start -- )
+    dup to fdt-start-addr
+    dup dup >fdth_struct_off l@ + to fdt-struct
+    dup dup >fdth_string_off l@ + to fdt-strings
+    drop
+;
+fdt-start fdt-init
 
 \ Dump fdt header for all to see and check FDT validity
 : fdt-check-header ( -- )
-    fdt-start dup 0 = IF
+    fdt-start-addr dup 0 = IF
         ." No flat device tree !" cr drop -1 throw EXIT THEN
     hex
     fdt-debug IF
@@ -105,28 +113,6 @@ fdt-check-header
 \ Lookup a string by index
 : fdt-fetch-string ( index -- str-addr str-len )  
   fdt-strings + dup from-cstring
-;
-
-: hex64-decode-unit ( str len ncells -- addr.lo ... addr.hi )
-  dup 2 <> IF
-     hex-decode-unit
-  ELSE
-     drop
-     base @ >r hex
-     $number IF 0 0 ELSE xlsplit THEN
-     r> base !
-  THEN
-;
-
-: hex64-encode-unit ( addr.lo ... addr.hi ncells -- str len )
-  dup 2 <> IF
-     hex-encode-unit
-  ELSE
-     drop
-     base @ >r hex
-     lxjoin (u.)
-     r> base !
-  THEN
 ;
 
 : fdt-create-dec  s" decode-unit" $CREATE , DOES> @ hex64-decode-unit ;
@@ -226,7 +212,9 @@ fdt-unflatten-tree
 
 \ Find memory size
 : fdt-parse-memory
-    " /memory" find-device
+    \ XXX FIXME Handle more than one memory node, and deal
+    \     with RMA vs. full access
+    " /memory@0" find-device
     " reg" get-node get-package-property IF throw -1 THEN
 
     \ XXX FIXME Assume one entry only in "reg" property for now
@@ -246,7 +234,7 @@ fdt-parse-memory
 
 \ Claim fdt memory and reserve map
 : fdt-claim-reserve
-    fdt-start
+    fdt-start-addr
     dup dup >fdth_tsize l@ 0 claim drop
     dup >fdth_rsvmap_off l@ +
     BEGIN
@@ -357,45 +345,65 @@ fdt-claim-reserve
    drop
    device-end
 ;
+
+: fdt-fix-cas-node ( start -- end )
+    recursive
+    fdt-next-tag dup OF_DT_BEGIN_NODE <> IF
+	." Error " cr
+	false to fdt-cas-fix?
+	EXIT
+    THEN drop
+    fdt-fetch-unit
+    dup 0 = IF drop drop " /" THEN
+    40 left-parse-string
+    2swap ?dup 0 <> IF
+	nip
+	1 + + \ Add the string len +@
+    ELSE
+	drop
+    THEN
+    fdt-debug IF ." Setting node: " 2dup type cr THEN
+    find-node ?dup 0 <> IF
+	set-node
+    ELSE
+	." Node not found " cr
+	false to fdt-cas-fix?
+	EXIT
+    THEN
+    fdt-debug IF ." Current  now: " pwd cr THEN
+    BEGIN
+	fdt-next-tag dup OF_DT_END_NODE <>
+    WHILE
+	dup OF_DT_PROP = IF
+	    fdt-debug IF ." Found property " cr THEN
+	    drop dup		( drop tag, dup addr     : a1 a1 )
+	    dup l@ dup rot 4 +	( fetch size, stack is   : a1 s s a2)
+	    dup l@ swap 4 +	( fetch nameid, stack is : a1 s s i a3 )
+	    rot			( we now have: a1 s i a3 s )
+	    fdt-encode-prop rot	( a1 s pa ps i)
+	    fdt-fetch-string		( a1 s pa ps na ns )
+	    property
+	    fdt-debug IF ." Setting property done " cr THEN
+	    + 8 + 3 + fffffffc and
+	ELSE dup OF_DT_BEGIN_NODE = IF
+		drop			( drop tag )
+		4 -
+		fdt-fix-cas-node
+		get-parent set-node
+		fdt-debug IF ." Returning back " pwd cr THEN
+	    ELSE
+		." Error " cr
+		drop
+		false to fdt-cas-fix?
+		EXIT
+	    THEN
+	THEN
+    REPEAT
+    drop \ drop tag
+;
+
+: fdt-fix-cas-success
+    fdt-cas-fix?
+;
+
 s" /" find-node fdt-fix-phandles
-
-
-\ Remaining bits from root.fs
-
-defer (client-exec)
-defer client-exec
-
-\ defined in slof/fs/client.fs
-defer callback
-defer continue-client
-
-: set-chosen ( prop len name len -- )
-  s" /chosen" find-node set-property ;
-
-: get-chosen ( name len -- [ prop len ] success )
-  s" /chosen" find-node get-property 0= ;
-
-" /" find-device
-
-new-device
-  s" aliases" device-name
-finish-device
-
-new-device
-  s" options" device-name
-finish-device
-
-new-device
-  s" openprom" device-name
-  s" BootROM" device-type
-finish-device
-
-new-device 
-#include <packages.fs>
-finish-device
-
-: open true ;
-: close ;
-
-device-end
-

@@ -20,6 +20,13 @@
 #define TYPE_ISA_BUS "ISA"
 #define ISA_BUS(obj) OBJECT_CHECK(ISABus, (obj), TYPE_ISA_BUS)
 
+#define TYPE_APPLE_SMC "isa-applesmc"
+
+static inline bool applesmc_find(void)
+{
+    return object_resolve_path_type("", TYPE_APPLE_SMC, NULL);
+}
+
 typedef struct ISADeviceClass {
     DeviceClass parent_class;
 } ISADeviceClass;
@@ -78,7 +85,7 @@ void isa_register_ioport(ISADevice *dev, MemoryRegion *io, uint16_t start);
  * @dev: the ISADevice against which these are registered; may be NULL.
  * @start: the base I/O port against which the portio->offset is applied.
  * @portio: the ports, sorted by offset.
- * @opaque: passed into the old_portio callbacks.
+ * @opaque: passed into the portio callbacks.
  * @name: passed into memory_region_init_io.
  */
 void isa_register_portio_list(ISADevice *dev, uint16_t start,

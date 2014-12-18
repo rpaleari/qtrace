@@ -18,6 +18,7 @@
 #include "hw/ptimer.h"
 #include "hw/sysbus.h"
 #include "hw/arm/imx.h"
+#include "qemu/main-loop.h"
 
 #define TYPE_IMX_GPT "imx.gpt"
 
@@ -145,8 +146,7 @@ static const VMStateDescription vmstate_imx_timer_gpt = {
     .name = "imx.gpt",
     .version_id = 3,
     .minimum_version_id = 3,
-    .minimum_version_id_old = 3,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32(cr, IMXGPTState),
         VMSTATE_UINT32(pr, IMXGPTState),
         VMSTATE_UINT32(sr, IMXGPTState),

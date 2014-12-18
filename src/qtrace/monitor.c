@@ -6,7 +6,7 @@
 #include "qtrace/gate.h"
 
 void qtrace_qmp_qtrace_enable(Monitor *mon, const QDict *qdict) {
-#ifdef CONFIG_QTRACE_SYSCALL
+#ifdef CONFIG_QTRACE_TRACER
   qtrace_qmp_tracer_enable(mon, qdict);
 #endif
 #ifdef CONFIG_QTRACE_TAINT
@@ -15,7 +15,7 @@ void qtrace_qmp_qtrace_enable(Monitor *mon, const QDict *qdict) {
 }
 
 void qtrace_qmp_qtrace_query(Monitor *mon, const QDict *qdict) {
-#ifdef CONFIG_QTRACE_SYSCALL
+#ifdef CONFIG_QTRACE_TRACER
   qtrace_qmp_tracer_query(mon, qdict);
 #endif
 #ifdef CONFIG_QTRACE_TAINT
@@ -23,7 +23,7 @@ void qtrace_qmp_qtrace_query(Monitor *mon, const QDict *qdict) {
 #endif
 }
 
-#ifdef CONFIG_QTRACE_SYSCALL
+#ifdef CONFIG_QTRACE_TRACER
 void qtrace_qmp_tracer_enable(Monitor *mon, const QDict *qdict) {
   bool state = qdict_get_bool(qdict, "enabled");
   qtrace_gate_tracer_set_state(state);
@@ -32,7 +32,7 @@ void qtrace_qmp_tracer_enable(Monitor *mon, const QDict *qdict) {
 void qtrace_qmp_tracer_query(Monitor *mon, const QDict *qdict) {
   bool state = qtrace_gate_tracer_get_state();
   monitor_printf(mon, "QTrace syscall tracer is currently %s\n",
-		 state ? "ON" : "OFF");
+                 state ? "ON" : "OFF");
 
 }
 #endif
@@ -46,7 +46,7 @@ void qtrace_qmp_taint_enable(Monitor *mon, const QDict *qdict) {
 void qtrace_qmp_taint_query(Monitor *mon, const QDict *qdict) {
   bool state = qtrace_gate_taint_get_state();
   monitor_printf(mon, "QTrace taint tracker is currently %s\n",
-		 state ? "ON" : "OFF");
+                 state ? "ON" : "OFF");
 
 }
 #endif

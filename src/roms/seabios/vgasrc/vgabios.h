@@ -19,26 +19,16 @@ struct VideoParam_s {
 
 extern struct VideoParam_s video_param_table[29];
 
-struct saveBDAstate {
-    u16 video_mode;
-    u16 video_cols;
-    u16 video_pagesize;
-    u16 crtc_address;
-    u8 video_rows;
-    u16 char_height;
-    u8 video_ctl;
-    u8 video_switches;
-    u8 modeset_ctl;
-    u16 cursor_type;
-    u16 cursor_pos[8];
-    u16 video_pagestart;
-    u8 video_page;
-    /* current font */
-    struct segoff_s font0;
-    struct segoff_s font1;
-};
+// Save/Restore flags
+#define SR_HARDWARE   0x0001
+#define SR_BDA        0x0002
+#define SR_DAC        0x0004
+#define SR_REGISTERS  0x0008
+#define SR_SAVE       0x0100
+#define SR_RESTORE    0x0200
 
 // Mode flags
+#define MF_LEGACY     0x0001
 #define MF_GRAYSUM    0x0002
 #define MF_NOPALETTE  0x0008
 #define MF_CUSTOMCRTC 0x0800
@@ -66,6 +56,29 @@ struct vgamode_s {
     u16 sstart;
 };
 
+// Graphics pixel operations.
+struct gfx_op {
+    struct vgamode_s *vmode_g;
+    u32 linelength;
+    u32 displaystart;
+
+    u8 op;
+    u16 x, y;
+
+    u8 pixels[8];
+    u16 xlen, ylen;
+    u16 srcy;
+};
+
+#define GO_READ8   1
+#define GO_WRITE8  2
+#define GO_MEMSET  3
+#define GO_MEMMOVE 4
+
+// Debug settings
+#define DEBUG_VGA_POST 1
+#define DEBUG_VGA_10 3
+
 // vgafonts.c
 extern u8 vgafont8[];
 extern u8 vgafont14[];
@@ -73,9 +86,8 @@ extern u8 vgafont16[];
 extern u8 vgafont14alt[];
 extern u8 vgafont16alt[];
 
-// Debug settings
-#define DEBUG_VGA_POST 1
-#define DEBUG_VGA_10 3
+// vgainit.c
+extern struct VideoSavePointer_s video_save_pointer_table;
 
 // vgabios.c
 extern int VgaBDF;
@@ -89,14 +101,18 @@ struct cursorpos {
 };
 int vga_bpp(struct vgamode_s *vmode_g);
 u16 calc_page_size(u8 memmodel, u16 width, u16 height);
-void save_bda_state(u16 seg, struct saveBDAstate *info);
-void restore_bda_state(u16 seg, struct saveBDAstate *info);
+int bda_save_restore(int cmd, u16 seg, void *data);
 struct vgamode_s *get_current_mode(void);
 int vga_set_mode(int mode, int flags);
 
 // vgafb.c
-void vgafb_scroll(int nblines, int attr
-                  , struct cursorpos ul, struct cursorpos lr);
+void init_gfx_op(struct gfx_op *op, struct vgamode_s *vmode_g);
+void handle_gfx_op(struct gfx_op *op);
+void *text_address(struct cursorpos cp);
+void vgafb_move_chars(struct vgamode_s *vmode_g, struct cursorpos dest
+                      , struct cursorpos src, struct cursorpos movesize);
+void vgafb_clear_chars(struct vgamode_s *vmode_g, struct cursorpos dest
+                       , struct carattr ca, struct cursorpos movesize);
 void vgafb_write_char(struct cursorpos cp, struct carattr ca);
 struct carattr vgafb_read_char(struct cursorpos cp);
 void vgafb_write_pixel(u8 color, u16 x, u16 y);

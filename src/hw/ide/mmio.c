@@ -109,8 +109,7 @@ static const VMStateDescription vmstate_ide_mmio = {
     .name = "mmio-ide",
     .version_id = 3,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_IDE_BUS(bus, MMIOState),
         VMSTATE_IDE_DRIVES(bus.ifs, MMIOState),
         VMSTATE_END_OF_LIST()
@@ -137,7 +136,7 @@ static void mmio_ide_initfn(Object *obj)
     SysBusDevice *d = SYS_BUS_DEVICE(obj);
     MMIOState *s = MMIO_IDE(obj);
 
-    ide_bus_new(&s->bus, DEVICE(obj), 0, 2);
+    ide_bus_new(&s->bus, sizeof(s->bus), DEVICE(obj), 0, 2);
     sysbus_init_irq(d, &s->irq);
 }
 

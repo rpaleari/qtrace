@@ -124,6 +124,30 @@ populate-pci-busses
 
 600 cp
 
+: check-patch-kernel-sc1 ( -- )
+    \ At this point we can try our best to patch the kernel. This function
+    \ gets called from the "quiesce" call that kernels execute before they
+    \ take over the system.
+    \
+    \ Here we know that ciregs->r4 contains the return address that gets us
+    \ back into enter_prom inside the guest kernel.
+    \ We assume that within a range of +- 16MB of that pointer all sc 1
+    \ instructions inside of that kernel reside.
+
+    \ test_ins (instruction that tells us the kernel's endianness; we use the
+    \           return address back into the kernel here.)
+    ciregs >r4 @
+    \ test_ins + 16MB (end of search range)
+    dup 1000000 +
+    \ MAX(test_ins - 16MB, 0) (start of search range)
+    dup 2000000 < IF 0 ELSE dup 2000000 - THEN
+    swap
+    check-and-patch-sc1
+;
+
+\ Add sc 1 patching
+' check-patch-kernel-sc1 add-quiesce-xt
+
 \ Add rtas cleanup last
 ' rtas-quiesce add-quiesce-xt
 
@@ -142,7 +166,7 @@ populate-pci-busses
 6c0 cp
 
 s" /cpus/@0" open-dev encode-int s" cpu" set-chosen
-s" /memory" open-dev encode-int s" memory" set-chosen
+s" /memory@0" open-dev encode-int s" memory" set-chosen
 
 6e0 cp
 

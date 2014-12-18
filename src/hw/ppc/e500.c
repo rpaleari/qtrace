@@ -39,7 +39,6 @@
 
 #define EPAPR_MAGIC                (0x45504150)
 #define BINARY_DEVICE_TREE_FILE    "mpc8544ds.dtb"
-#define UIMAGE_LOAD_BASE           0
 #define DTC_LOAD_PAD               0x1800000
 #define DTC_PAD_MASK               0xFFFFF
 #define DTB_MAX_SIZE               (8 * 1024 * 1024)
@@ -108,29 +107,33 @@ static void dt_serial_create(void *fdt, unsigned long long offset,
     char ser[128];
 
     snprintf(ser, sizeof(ser), "%s/serial@%llx", soc, offset);
-    qemu_devtree_add_subnode(fdt, ser);
-    qemu_devtree_setprop_string(fdt, ser, "device_type", "serial");
-    qemu_devtree_setprop_string(fdt, ser, "compatible", "ns16550");
-    qemu_devtree_setprop_cells(fdt, ser, "reg", offset, 0x100);
-    qemu_devtree_setprop_cell(fdt, ser, "cell-index", idx);
-    qemu_devtree_setprop_cell(fdt, ser, "clock-frequency", 0);
-    qemu_devtree_setprop_cells(fdt, ser, "interrupts", 42, 2);
-    qemu_devtree_setprop_phandle(fdt, ser, "interrupt-parent", mpic);
-    qemu_devtree_setprop_string(fdt, "/aliases", alias, ser);
+    qemu_fdt_add_subnode(fdt, ser);
+    qemu_fdt_setprop_string(fdt, ser, "device_type", "serial");
+    qemu_fdt_setprop_string(fdt, ser, "compatible", "ns16550");
+    qemu_fdt_setprop_cells(fdt, ser, "reg", offset, 0x100);
+    qemu_fdt_setprop_cell(fdt, ser, "cell-index", idx);
+    qemu_fdt_setprop_cell(fdt, ser, "clock-frequency", 0);
+    qemu_fdt_setprop_cells(fdt, ser, "interrupts", 42, 2);
+    qemu_fdt_setprop_phandle(fdt, ser, "interrupt-parent", mpic);
+    qemu_fdt_setprop_string(fdt, "/aliases", alias, ser);
 
     if (defcon) {
-        qemu_devtree_setprop_string(fdt, "/chosen", "linux,stdout-path", ser);
+        qemu_fdt_setprop_string(fdt, "/chosen", "linux,stdout-path", ser);
     }
 }
 
-static int ppce500_load_device_tree(CPUPPCState *env,
+static int ppce500_load_device_tree(MachineState *machine,
                                     PPCE500Params *params,
                                     hwaddr addr,
                                     hwaddr initrd_base,
-                                    hwaddr initrd_size)
+                                    hwaddr initrd_size,
+                                    hwaddr kernel_base,
+                                    hwaddr kernel_size,
+                                    bool dry_run)
 {
+    CPUPPCState *env = first_cpu->env_ptr;
     int ret = -1;
-    uint64_t mem_reg_property[] = { 0, cpu_to_be64(params->ram_size) };
+    uint64_t mem_reg_property[] = { 0, cpu_to_be64(machine->ram_size) };
     int fdt_size;
     void *fdt;
     uint8_t hypercall[16];
@@ -181,31 +184,38 @@ static int ppce500_load_device_tree(CPUPPCState *env,
     }
 
     /* Manipulate device tree in memory. */
-    qemu_devtree_setprop_cell(fdt, "/", "#address-cells", 2);
-    qemu_devtree_setprop_cell(fdt, "/", "#size-cells", 2);
+    qemu_fdt_setprop_cell(fdt, "/", "#address-cells", 2);
+    qemu_fdt_setprop_cell(fdt, "/", "#size-cells", 2);
 
-    qemu_devtree_add_subnode(fdt, "/memory");
-    qemu_devtree_setprop_string(fdt, "/memory", "device_type", "memory");
-    qemu_devtree_setprop(fdt, "/memory", "reg", mem_reg_property,
-                         sizeof(mem_reg_property));
+    qemu_fdt_add_subnode(fdt, "/memory");
+    qemu_fdt_setprop_string(fdt, "/memory", "device_type", "memory");
+    qemu_fdt_setprop(fdt, "/memory", "reg", mem_reg_property,
+                     sizeof(mem_reg_property));
 
-    qemu_devtree_add_subnode(fdt, "/chosen");
+    qemu_fdt_add_subnode(fdt, "/chosen");
     if (initrd_size) {
-        ret = qemu_devtree_setprop_cell(fdt, "/chosen", "linux,initrd-start",
-                                        initrd_base);
+        ret = qemu_fdt_setprop_cell(fdt, "/chosen", "linux,initrd-start",
+                                    initrd_base);
         if (ret < 0) {
             fprintf(stderr, "couldn't set /chosen/linux,initrd-start\n");
         }
 
-        ret = qemu_devtree_setprop_cell(fdt, "/chosen", "linux,initrd-end",
-                                        (initrd_base + initrd_size));
+        ret = qemu_fdt_setprop_cell(fdt, "/chosen", "linux,initrd-end",
+                                    (initrd_base + initrd_size));
         if (ret < 0) {
             fprintf(stderr, "couldn't set /chosen/linux,initrd-end\n");
         }
+
     }
 
-    ret = qemu_devtree_setprop_string(fdt, "/chosen", "bootargs",
-                                      params->kernel_cmdline);
+    if (kernel_base != -1ULL) {
+        qemu_fdt_setprop_cells(fdt, "/chosen", "qemu,boot-kernel",
+                                     kernel_base >> 32, kernel_base,
+                                     kernel_size >> 32, kernel_size);
+    }
+
+    ret = qemu_fdt_setprop_string(fdt, "/chosen", "bootargs",
+                                      machine->kernel_cmdline);
     if (ret < 0)
         fprintf(stderr, "couldn't set /chosen/bootargs\n");
 
@@ -215,27 +225,28 @@ static int ppce500_load_device_tree(CPUPPCState *env,
         tb_freq = kvmppc_get_tbfreq();
 
         /* indicate KVM hypercall interface */
-        qemu_devtree_add_subnode(fdt, "/hypervisor");
-        qemu_devtree_setprop_string(fdt, "/hypervisor", "compatible",
-                                    "linux,kvm");
+        qemu_fdt_add_subnode(fdt, "/hypervisor");
+        qemu_fdt_setprop_string(fdt, "/hypervisor", "compatible",
+                                "linux,kvm");
         kvmppc_get_hypercall(env, hypercall, sizeof(hypercall));
-        qemu_devtree_setprop(fdt, "/hypervisor", "hcall-instructions",
-                             hypercall, sizeof(hypercall));
+        qemu_fdt_setprop(fdt, "/hypervisor", "hcall-instructions",
+                         hypercall, sizeof(hypercall));
         /* if KVM supports the idle hcall, set property indicating this */
         if (kvmppc_get_hasidle(env)) {
-            qemu_devtree_setprop(fdt, "/hypervisor", "has-idle", NULL, 0);
+            qemu_fdt_setprop(fdt, "/hypervisor", "has-idle", NULL, 0);
         }
     }
 
     /* Create CPU nodes */
-    qemu_devtree_add_subnode(fdt, "/cpus");
-    qemu_devtree_setprop_cell(fdt, "/cpus", "#address-cells", 1);
-    qemu_devtree_setprop_cell(fdt, "/cpus", "#size-cells", 0);
+    qemu_fdt_add_subnode(fdt, "/cpus");
+    qemu_fdt_setprop_cell(fdt, "/cpus", "#address-cells", 1);
+    qemu_fdt_setprop_cell(fdt, "/cpus", "#size-cells", 0);
 
     /* We need to generate the cpu nodes in reverse order, so Linux can pick
        the first node as boot node and be happy */
     for (i = smp_cpus - 1; i >= 0; i--) {
         CPUState *cpu;
+        PowerPCCPU *pcpu;
         char cpu_name[128];
         uint64_t cpu_release_addr = MPC8544_SPIN_BASE + (i * 0x20);
 
@@ -244,84 +255,92 @@ static int ppce500_load_device_tree(CPUPPCState *env,
             continue;
         }
         env = cpu->env_ptr;
+        pcpu = POWERPC_CPU(cpu);
 
         snprintf(cpu_name, sizeof(cpu_name), "/cpus/PowerPC,8544@%x",
-                 cpu->cpu_index);
-        qemu_devtree_add_subnode(fdt, cpu_name);
-        qemu_devtree_setprop_cell(fdt, cpu_name, "clock-frequency", clock_freq);
-        qemu_devtree_setprop_cell(fdt, cpu_name, "timebase-frequency", tb_freq);
-        qemu_devtree_setprop_string(fdt, cpu_name, "device_type", "cpu");
-        qemu_devtree_setprop_cell(fdt, cpu_name, "reg", cpu->cpu_index);
-        qemu_devtree_setprop_cell(fdt, cpu_name, "d-cache-line-size",
-                                  env->dcache_line_size);
-        qemu_devtree_setprop_cell(fdt, cpu_name, "i-cache-line-size",
-                                  env->icache_line_size);
-        qemu_devtree_setprop_cell(fdt, cpu_name, "d-cache-size", 0x8000);
-        qemu_devtree_setprop_cell(fdt, cpu_name, "i-cache-size", 0x8000);
-        qemu_devtree_setprop_cell(fdt, cpu_name, "bus-frequency", 0);
+                 ppc_get_vcpu_dt_id(pcpu));
+        qemu_fdt_add_subnode(fdt, cpu_name);
+        qemu_fdt_setprop_cell(fdt, cpu_name, "clock-frequency", clock_freq);
+        qemu_fdt_setprop_cell(fdt, cpu_name, "timebase-frequency", tb_freq);
+        qemu_fdt_setprop_string(fdt, cpu_name, "device_type", "cpu");
+        qemu_fdt_setprop_cell(fdt, cpu_name, "reg",
+                              ppc_get_vcpu_dt_id(pcpu));
+        qemu_fdt_setprop_cell(fdt, cpu_name, "d-cache-line-size",
+                              env->dcache_line_size);
+        qemu_fdt_setprop_cell(fdt, cpu_name, "i-cache-line-size",
+                              env->icache_line_size);
+        qemu_fdt_setprop_cell(fdt, cpu_name, "d-cache-size", 0x8000);
+        qemu_fdt_setprop_cell(fdt, cpu_name, "i-cache-size", 0x8000);
+        qemu_fdt_setprop_cell(fdt, cpu_name, "bus-frequency", 0);
         if (cpu->cpu_index) {
-            qemu_devtree_setprop_string(fdt, cpu_name, "status", "disabled");
-            qemu_devtree_setprop_string(fdt, cpu_name, "enable-method", "spin-table");
-            qemu_devtree_setprop_u64(fdt, cpu_name, "cpu-release-addr",
-                                     cpu_release_addr);
+            qemu_fdt_setprop_string(fdt, cpu_name, "status", "disabled");
+            qemu_fdt_setprop_string(fdt, cpu_name, "enable-method",
+                                    "spin-table");
+            qemu_fdt_setprop_u64(fdt, cpu_name, "cpu-release-addr",
+                                 cpu_release_addr);
         } else {
-            qemu_devtree_setprop_string(fdt, cpu_name, "status", "okay");
+            qemu_fdt_setprop_string(fdt, cpu_name, "status", "okay");
         }
     }
 
-    qemu_devtree_add_subnode(fdt, "/aliases");
+    qemu_fdt_add_subnode(fdt, "/aliases");
     /* XXX These should go into their respective devices' code */
     snprintf(soc, sizeof(soc), "/soc@%llx", MPC8544_CCSRBAR_BASE);
-    qemu_devtree_add_subnode(fdt, soc);
-    qemu_devtree_setprop_string(fdt, soc, "device_type", "soc");
-    qemu_devtree_setprop(fdt, soc, "compatible", compatible_sb,
-                         sizeof(compatible_sb));
-    qemu_devtree_setprop_cell(fdt, soc, "#address-cells", 1);
-    qemu_devtree_setprop_cell(fdt, soc, "#size-cells", 1);
-    qemu_devtree_setprop_cells(fdt, soc, "ranges", 0x0,
-                               MPC8544_CCSRBAR_BASE >> 32, MPC8544_CCSRBAR_BASE,
-                               MPC8544_CCSRBAR_SIZE);
+    qemu_fdt_add_subnode(fdt, soc);
+    qemu_fdt_setprop_string(fdt, soc, "device_type", "soc");
+    qemu_fdt_setprop(fdt, soc, "compatible", compatible_sb,
+                     sizeof(compatible_sb));
+    qemu_fdt_setprop_cell(fdt, soc, "#address-cells", 1);
+    qemu_fdt_setprop_cell(fdt, soc, "#size-cells", 1);
+    qemu_fdt_setprop_cells(fdt, soc, "ranges", 0x0,
+                           MPC8544_CCSRBAR_BASE >> 32, MPC8544_CCSRBAR_BASE,
+                           MPC8544_CCSRBAR_SIZE);
     /* XXX should contain a reasonable value */
-    qemu_devtree_setprop_cell(fdt, soc, "bus-frequency", 0);
+    qemu_fdt_setprop_cell(fdt, soc, "bus-frequency", 0);
 
     snprintf(mpic, sizeof(mpic), "%s/pic@%llx", soc, MPC8544_MPIC_REGS_OFFSET);
-    qemu_devtree_add_subnode(fdt, mpic);
-    qemu_devtree_setprop_string(fdt, mpic, "device_type", "open-pic");
-    qemu_devtree_setprop_string(fdt, mpic, "compatible", "fsl,mpic");
-    qemu_devtree_setprop_cells(fdt, mpic, "reg", MPC8544_MPIC_REGS_OFFSET,
-                               0x40000);
-    qemu_devtree_setprop_cell(fdt, mpic, "#address-cells", 0);
-    qemu_devtree_setprop_cell(fdt, mpic, "#interrupt-cells", 2);
-    mpic_ph = qemu_devtree_alloc_phandle(fdt);
-    qemu_devtree_setprop_cell(fdt, mpic, "phandle", mpic_ph);
-    qemu_devtree_setprop_cell(fdt, mpic, "linux,phandle", mpic_ph);
-    qemu_devtree_setprop(fdt, mpic, "interrupt-controller", NULL, 0);
+    qemu_fdt_add_subnode(fdt, mpic);
+    qemu_fdt_setprop_string(fdt, mpic, "device_type", "open-pic");
+    qemu_fdt_setprop_string(fdt, mpic, "compatible", "fsl,mpic");
+    qemu_fdt_setprop_cells(fdt, mpic, "reg", MPC8544_MPIC_REGS_OFFSET,
+                           0x40000);
+    qemu_fdt_setprop_cell(fdt, mpic, "#address-cells", 0);
+    qemu_fdt_setprop_cell(fdt, mpic, "#interrupt-cells", 2);
+    mpic_ph = qemu_fdt_alloc_phandle(fdt);
+    qemu_fdt_setprop_cell(fdt, mpic, "phandle", mpic_ph);
+    qemu_fdt_setprop_cell(fdt, mpic, "linux,phandle", mpic_ph);
+    qemu_fdt_setprop(fdt, mpic, "interrupt-controller", NULL, 0);
 
     /*
      * We have to generate ser1 first, because Linux takes the first
      * device it finds in the dt as serial output device. And we generate
      * devices in reverse order to the dt.
      */
-    dt_serial_create(fdt, MPC8544_SERIAL1_REGS_OFFSET,
-                     soc, mpic, "serial1", 1, false);
-    dt_serial_create(fdt, MPC8544_SERIAL0_REGS_OFFSET,
-                     soc, mpic, "serial0", 0, true);
+    if (serial_hds[1]) {
+        dt_serial_create(fdt, MPC8544_SERIAL1_REGS_OFFSET,
+                         soc, mpic, "serial1", 1, false);
+    }
+
+    if (serial_hds[0]) {
+        dt_serial_create(fdt, MPC8544_SERIAL0_REGS_OFFSET,
+                         soc, mpic, "serial0", 0, true);
+    }
 
     snprintf(gutil, sizeof(gutil), "%s/global-utilities@%llx", soc,
              MPC8544_UTIL_OFFSET);
-    qemu_devtree_add_subnode(fdt, gutil);
-    qemu_devtree_setprop_string(fdt, gutil, "compatible", "fsl,mpc8544-guts");
-    qemu_devtree_setprop_cells(fdt, gutil, "reg", MPC8544_UTIL_OFFSET, 0x1000);
-    qemu_devtree_setprop(fdt, gutil, "fsl,has-rstcr", NULL, 0);
+    qemu_fdt_add_subnode(fdt, gutil);
+    qemu_fdt_setprop_string(fdt, gutil, "compatible", "fsl,mpc8544-guts");
+    qemu_fdt_setprop_cells(fdt, gutil, "reg", MPC8544_UTIL_OFFSET, 0x1000);
+    qemu_fdt_setprop(fdt, gutil, "fsl,has-rstcr", NULL, 0);
 
     snprintf(msi, sizeof(msi), "/%s/msi@%llx", soc, MPC8544_MSI_REGS_OFFSET);
-    qemu_devtree_add_subnode(fdt, msi);
-    qemu_devtree_setprop_string(fdt, msi, "compatible", "fsl,mpic-msi");
-    qemu_devtree_setprop_cells(fdt, msi, "reg", MPC8544_MSI_REGS_OFFSET, 0x200);
-    msi_ph = qemu_devtree_alloc_phandle(fdt);
-    qemu_devtree_setprop_cells(fdt, msi, "msi-available-ranges", 0x0, 0x100);
-    qemu_devtree_setprop_phandle(fdt, msi, "interrupt-parent", mpic);
-    qemu_devtree_setprop_cells(fdt, msi, "interrupts",
+    qemu_fdt_add_subnode(fdt, msi);
+    qemu_fdt_setprop_string(fdt, msi, "compatible", "fsl,mpic-msi");
+    qemu_fdt_setprop_cells(fdt, msi, "reg", MPC8544_MSI_REGS_OFFSET, 0x200);
+    msi_ph = qemu_fdt_alloc_phandle(fdt);
+    qemu_fdt_setprop_cells(fdt, msi, "msi-available-ranges", 0x0, 0x100);
+    qemu_fdt_setprop_phandle(fdt, msi, "interrupt-parent", mpic);
+    qemu_fdt_setprop_cells(fdt, msi, "interrupts",
         0xe0, 0x0,
         0xe1, 0x0,
         0xe2, 0x0,
@@ -330,56 +349,97 @@ static int ppce500_load_device_tree(CPUPPCState *env,
         0xe5, 0x0,
         0xe6, 0x0,
         0xe7, 0x0);
-    qemu_devtree_setprop_cell(fdt, msi, "phandle", msi_ph);
-    qemu_devtree_setprop_cell(fdt, msi, "linux,phandle", msi_ph);
+    qemu_fdt_setprop_cell(fdt, msi, "phandle", msi_ph);
+    qemu_fdt_setprop_cell(fdt, msi, "linux,phandle", msi_ph);
 
     snprintf(pci, sizeof(pci), "/pci@%llx", MPC8544_PCI_REGS_BASE);
-    qemu_devtree_add_subnode(fdt, pci);
-    qemu_devtree_setprop_cell(fdt, pci, "cell-index", 0);
-    qemu_devtree_setprop_string(fdt, pci, "compatible", "fsl,mpc8540-pci");
-    qemu_devtree_setprop_string(fdt, pci, "device_type", "pci");
-    qemu_devtree_setprop_cells(fdt, pci, "interrupt-map-mask", 0xf800, 0x0,
-                               0x0, 0x7);
-    pci_map = pci_map_create(fdt, qemu_devtree_get_phandle(fdt, mpic),
+    qemu_fdt_add_subnode(fdt, pci);
+    qemu_fdt_setprop_cell(fdt, pci, "cell-index", 0);
+    qemu_fdt_setprop_string(fdt, pci, "compatible", "fsl,mpc8540-pci");
+    qemu_fdt_setprop_string(fdt, pci, "device_type", "pci");
+    qemu_fdt_setprop_cells(fdt, pci, "interrupt-map-mask", 0xf800, 0x0,
+                           0x0, 0x7);
+    pci_map = pci_map_create(fdt, qemu_fdt_get_phandle(fdt, mpic),
                              params->pci_first_slot, params->pci_nr_slots,
                              &len);
-    qemu_devtree_setprop(fdt, pci, "interrupt-map", pci_map, len);
-    qemu_devtree_setprop_phandle(fdt, pci, "interrupt-parent", mpic);
-    qemu_devtree_setprop_cells(fdt, pci, "interrupts", 24, 2);
-    qemu_devtree_setprop_cells(fdt, pci, "bus-range", 0, 255);
+    qemu_fdt_setprop(fdt, pci, "interrupt-map", pci_map, len);
+    qemu_fdt_setprop_phandle(fdt, pci, "interrupt-parent", mpic);
+    qemu_fdt_setprop_cells(fdt, pci, "interrupts", 24, 2);
+    qemu_fdt_setprop_cells(fdt, pci, "bus-range", 0, 255);
     for (i = 0; i < 14; i++) {
         pci_ranges[i] = cpu_to_be32(pci_ranges[i]);
     }
-    qemu_devtree_setprop_cell(fdt, pci, "fsl,msi", msi_ph);
-    qemu_devtree_setprop(fdt, pci, "ranges", pci_ranges, sizeof(pci_ranges));
-    qemu_devtree_setprop_cells(fdt, pci, "reg", MPC8544_PCI_REGS_BASE >> 32,
-                               MPC8544_PCI_REGS_BASE, 0, 0x1000);
-    qemu_devtree_setprop_cell(fdt, pci, "clock-frequency", 66666666);
-    qemu_devtree_setprop_cell(fdt, pci, "#interrupt-cells", 1);
-    qemu_devtree_setprop_cell(fdt, pci, "#size-cells", 2);
-    qemu_devtree_setprop_cell(fdt, pci, "#address-cells", 3);
-    qemu_devtree_setprop_string(fdt, "/aliases", "pci0", pci);
+    qemu_fdt_setprop_cell(fdt, pci, "fsl,msi", msi_ph);
+    qemu_fdt_setprop(fdt, pci, "ranges", pci_ranges, sizeof(pci_ranges));
+    qemu_fdt_setprop_cells(fdt, pci, "reg", MPC8544_PCI_REGS_BASE >> 32,
+                           MPC8544_PCI_REGS_BASE, 0, 0x1000);
+    qemu_fdt_setprop_cell(fdt, pci, "clock-frequency", 66666666);
+    qemu_fdt_setprop_cell(fdt, pci, "#interrupt-cells", 1);
+    qemu_fdt_setprop_cell(fdt, pci, "#size-cells", 2);
+    qemu_fdt_setprop_cell(fdt, pci, "#address-cells", 3);
+    qemu_fdt_setprop_string(fdt, "/aliases", "pci0", pci);
 
     params->fixup_devtree(params, fdt);
 
     if (toplevel_compat) {
-        qemu_devtree_setprop(fdt, "/", "compatible", toplevel_compat,
-                             strlen(toplevel_compat) + 1);
+        qemu_fdt_setprop(fdt, "/", "compatible", toplevel_compat,
+                         strlen(toplevel_compat) + 1);
     }
 
 done:
-    qemu_devtree_dumpdtb(fdt, fdt_size);
-    ret = rom_add_blob_fixed(BINARY_DEVICE_TREE_FILE, fdt, fdt_size, addr);
-    if (ret < 0) {
-        goto out;
+    if (!dry_run) {
+        qemu_fdt_dumpdtb(fdt, fdt_size);
+        cpu_physical_memory_write(addr, fdt, fdt_size);
     }
-    g_free(fdt);
     ret = fdt_size;
 
 out:
     g_free(pci_map);
 
     return ret;
+}
+
+typedef struct DeviceTreeParams {
+    MachineState *machine;
+    PPCE500Params params;
+    hwaddr addr;
+    hwaddr initrd_base;
+    hwaddr initrd_size;
+    hwaddr kernel_base;
+    hwaddr kernel_size;
+} DeviceTreeParams;
+
+static void ppce500_reset_device_tree(void *opaque)
+{
+    DeviceTreeParams *p = opaque;
+    ppce500_load_device_tree(p->machine, &p->params, p->addr, p->initrd_base,
+                             p->initrd_size, p->kernel_base, p->kernel_size,
+                             false);
+}
+
+static int ppce500_prep_device_tree(MachineState *machine,
+                                    PPCE500Params *params,
+                                    hwaddr addr,
+                                    hwaddr initrd_base,
+                                    hwaddr initrd_size,
+                                    hwaddr kernel_base,
+                                    hwaddr kernel_size)
+{
+    DeviceTreeParams *p = g_new(DeviceTreeParams, 1);
+    p->machine = machine;
+    p->params = *params;
+    p->addr = addr;
+    p->initrd_base = initrd_base;
+    p->initrd_size = initrd_size;
+    p->kernel_base = kernel_base;
+    p->kernel_size = kernel_size;
+
+    qemu_register_reset(ppce500_reset_device_tree, p);
+
+    /* Issue the device tree loader once, so that we get the size of the blob */
+    return ppce500_load_device_tree(machine, params, addr, initrd_base,
+                                    initrd_size, kernel_base, kernel_size,
+                                    true);
 }
 
 /* Create -kernel TLB entries for BookE.  */
@@ -433,14 +493,13 @@ static void ppce500_cpu_reset_sec(void *opaque)
 {
     PowerPCCPU *cpu = opaque;
     CPUState *cs = CPU(cpu);
-    CPUPPCState *env = &cpu->env;
 
     cpu_reset(cs);
 
     /* Secondary CPU starts in halted state for now. Needs to change when
        implementing non-kernel boot. */
     cs->halted = 1;
-    env->exception_index = EXCP_HLT;
+    cs->exception_index = EXCP_HLT;
 }
 
 static void ppce500_cpu_reset(void *opaque)
@@ -505,7 +564,7 @@ static DeviceState *ppce500_init_mpic_kvm(PPCE500Params *params,
         return NULL;
     }
 
-    for (cs = first_cpu; cs != NULL; cs = cs->next_cpu) {
+    CPU_FOREACH(cs) {
         if (kvm_openpic_connect_vcpu(dev, cs)) {
             fprintf(stderr, "%s: failed to connect vcpu to irqchip\n",
                     __func__);
@@ -559,23 +618,28 @@ static qemu_irq *ppce500_init_mpic(PPCE500Params *params, MemoryRegion *ccsr,
     return mpic;
 }
 
-void ppce500_init(PPCE500Params *params)
+void ppce500_init(MachineState *machine, PPCE500Params *params)
 {
     MemoryRegion *address_space_mem = get_system_memory();
     MemoryRegion *ram = g_new(MemoryRegion, 1);
     PCIBus *pci_bus;
     CPUPPCState *env = NULL;
-    uint64_t elf_entry;
-    uint64_t elf_lowaddr;
-    hwaddr entry=0;
-    hwaddr loadaddr=UIMAGE_LOAD_BASE;
-    target_long kernel_size=0;
-    target_ulong dt_base = 0;
-    target_ulong initrd_base = 0;
-    target_long initrd_size = 0;
-    target_ulong cur_base = 0;
+    uint64_t loadaddr;
+    hwaddr kernel_base = -1LL;
+    int kernel_size = 0;
+    hwaddr dt_base = 0;
+    hwaddr initrd_base = 0;
+    int initrd_size = 0;
+    hwaddr cur_base = 0;
+    char *filename;
+    hwaddr bios_entry = 0;
+    target_long bios_size;
+    struct boot_info *boot_info;
+    int dt_size;
     int i;
-    unsigned int pci_irq_nrs[4] = {1, 2, 3, 4};
+    /* irq num for pin INTA, INTB, INTC and INTD is 1, 2, 3 and
+     * 4 respectively */
+    unsigned int pci_irq_nrs[PCI_NUM_PINS] = {1, 2, 3, 4};
     qemu_irq **irqs, *mpic;
     DeviceState *dev;
     CPUPPCState *firstenv = NULL;
@@ -584,8 +648,8 @@ void ppce500_init(PPCE500Params *params)
     PPCE500CCSRState *ccsr;
 
     /* Setup CPUs */
-    if (params->cpu_model == NULL) {
-        params->cpu_model = "e500v2_v30";
+    if (machine->cpu_model == NULL) {
+        machine->cpu_model = "e500v2_v30";
     }
 
     irqs = g_malloc0(smp_cpus * sizeof(qemu_irq *));
@@ -595,7 +659,7 @@ void ppce500_init(PPCE500Params *params)
         CPUState *cs;
         qemu_irq *input;
 
-        cpu = cpu_ppc_init(params->cpu_model);
+        cpu = cpu_ppc_init(machine->cpu_model);
         if (cpu == NULL) {
             fprintf(stderr, "Unable to initialize CPU!\n");
             exit(1);
@@ -611,7 +675,7 @@ void ppce500_init(PPCE500Params *params)
         input = (qemu_irq *)env->irq_inputs;
         irqs[i][OPENPIC_OUTPUT_INT] = input[PPCE500_INPUT_INT];
         irqs[i][OPENPIC_OUTPUT_CINT] = input[PPCE500_INPUT_CINT];
-        env->spr[SPR_BOOKE_PIR] = cs->cpu_index = i;
+        env->spr_cb[SPR_BOOKE_PIR].default_value = cs->cpu_index = i;
         env->mpic_iack = MPC8544_CCSRBAR_BASE +
                          MPC8544_MPIC_REGS_OFFSET + 0xa0;
 
@@ -634,11 +698,10 @@ void ppce500_init(PPCE500Params *params)
 
     /* Fixup Memory size on a alignment boundary */
     ram_size &= ~(RAM_SIZES_ALIGN - 1);
-    params->ram_size = ram_size;
+    machine->ram_size = ram_size;
 
     /* Register Memory */
-    memory_region_init_ram(ram, NULL, "mpc8544ds.ram", ram_size);
-    vmstate_register_ram_global(ram);
+    memory_region_allocate_system_memory(ram, NULL, "mpc8544ds.ram", ram_size);
     memory_region_add_subregion(address_space_mem, 0, ram);
 
     dev = qdev_create(NULL, "e500-ccsr");
@@ -675,12 +738,13 @@ void ppce500_init(PPCE500Params *params)
     /* PCI */
     dev = qdev_create(NULL, "e500-pcihost");
     qdev_prop_set_uint32(dev, "first_slot", params->pci_first_slot);
+    qdev_prop_set_uint32(dev, "first_pin_irq", pci_irq_nrs[0]);
     qdev_init_nofail(dev);
     s = SYS_BUS_DEVICE(dev);
-    sysbus_connect_irq(s, 0, mpic[pci_irq_nrs[0]]);
-    sysbus_connect_irq(s, 1, mpic[pci_irq_nrs[1]]);
-    sysbus_connect_irq(s, 2, mpic[pci_irq_nrs[2]]);
-    sysbus_connect_irq(s, 3, mpic[pci_irq_nrs[3]]);
+    for (i = 0; i < PCI_NUM_PINS; i++) {
+        sysbus_connect_irq(s, i, mpic[pci_irq_nrs[i]]);
+    }
+
     memory_region_add_subregion(ccsr_addr_space, MPC8544_PCI_REGS_OFFSET,
                                 sysbus_mmio_get_region(s, 0));
 
@@ -700,64 +764,95 @@ void ppce500_init(PPCE500Params *params)
     /* Register spinning region */
     sysbus_create_simple("e500-spin", MPC8544_SPIN_BASE, NULL);
 
+    if (cur_base < (32 * 1024 * 1024)) {
+        /* u-boot occupies memory up to 32MB, so load blobs above */
+        cur_base = (32 * 1024 * 1024);
+    }
+
     /* Load kernel. */
-    if (params->kernel_filename) {
-        kernel_size = load_uimage(params->kernel_filename, &entry,
-                                  &loadaddr, NULL);
-        if (kernel_size < 0) {
-            kernel_size = load_elf(params->kernel_filename, NULL, NULL,
-                                   &elf_entry, &elf_lowaddr, NULL, 1,
-                                   ELF_MACHINE, 0);
-            entry = elf_entry;
-            loadaddr = elf_lowaddr;
-        }
-        /* XXX try again as binary */
+    if (machine->kernel_filename) {
+        kernel_base = cur_base;
+        kernel_size = load_image_targphys(machine->kernel_filename,
+                                          cur_base,
+                                          ram_size - cur_base);
         if (kernel_size < 0) {
             fprintf(stderr, "qemu: could not load kernel '%s'\n",
-                    params->kernel_filename);
+                    machine->kernel_filename);
             exit(1);
         }
 
-        cur_base = loadaddr + kernel_size;
-
-        /* Reserve space for dtb */
-        dt_base = (cur_base + DTC_LOAD_PAD) & ~DTC_PAD_MASK;
-        cur_base += DTB_MAX_SIZE;
+        cur_base += kernel_size;
     }
 
     /* Load initrd. */
-    if (params->initrd_filename) {
+    if (machine->initrd_filename) {
         initrd_base = (cur_base + INITRD_LOAD_PAD) & ~INITRD_PAD_MASK;
-        initrd_size = load_image_targphys(params->initrd_filename, initrd_base,
+        initrd_size = load_image_targphys(machine->initrd_filename, initrd_base,
                                           ram_size - initrd_base);
 
         if (initrd_size < 0) {
             fprintf(stderr, "qemu: could not load initial ram disk '%s'\n",
-                    params->initrd_filename);
+                    machine->initrd_filename);
             exit(1);
         }
 
         cur_base = initrd_base + initrd_size;
     }
 
-    /* If we're loading a kernel directly, we must load the device tree too. */
-    if (params->kernel_filename) {
-        struct boot_info *boot_info;
-        int dt_size;
+    /*
+     * Smart firmware defaults ahead!
+     *
+     * We follow the following table to select which payload we execute.
+     *
+     *  -kernel | -bios | payload
+     * ---------+-------+---------
+     *     N    |   Y   | u-boot
+     *     N    |   N   | u-boot
+     *     Y    |   Y   | u-boot
+     *     Y    |   N   | kernel
+     *
+     * This ensures backwards compatibility with how we used to expose
+     * -kernel to users but allows them to run through u-boot as well.
+     */
+    if (bios_name == NULL) {
+        if (machine->kernel_filename) {
+            bios_name = machine->kernel_filename;
+        } else {
+            bios_name = "u-boot.e500";
+        }
+    }
+    filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, bios_name);
 
-        dt_size = ppce500_load_device_tree(env, params, dt_base, initrd_base,
-                                           initrd_size);
-        if (dt_size < 0) {
-            fprintf(stderr, "couldn't load device tree\n");
+    bios_size = load_elf(filename, NULL, NULL, &bios_entry, &loadaddr, NULL,
+                         1, ELF_MACHINE, 0);
+    if (bios_size < 0) {
+        /*
+         * Hrm. No ELF image? Try a uImage, maybe someone is giving us an
+         * ePAPR compliant kernel
+         */
+        kernel_size = load_uimage(filename, &bios_entry, &loadaddr, NULL);
+        if (kernel_size < 0) {
+            fprintf(stderr, "qemu: could not load firmware '%s'\n", filename);
             exit(1);
         }
-        assert(dt_size < DTB_MAX_SIZE);
-
-        boot_info = env->load_info;
-        boot_info->entry = entry;
-        boot_info->dt_base = dt_base;
-        boot_info->dt_size = dt_size;
     }
+
+    /* Reserve space for dtb */
+    dt_base = (loadaddr + bios_size + DTC_LOAD_PAD) & ~DTC_PAD_MASK;
+
+    dt_size = ppce500_prep_device_tree(machine, params, dt_base,
+                                       initrd_base, initrd_size,
+                                       kernel_base, kernel_size);
+    if (dt_size < 0) {
+        fprintf(stderr, "couldn't load device tree\n");
+        exit(1);
+    }
+    assert(dt_size < DTB_MAX_SIZE);
+
+    boot_info = env->load_info;
+    boot_info->entry = bios_entry;
+    boot_info->dt_base = dt_base;
+    boot_info->dt_size = dt_size;
 
     if (kvm_enabled()) {
         kvmppc_init();

@@ -133,7 +133,7 @@ static void ivshmem_update_irq(IVShmemState *s, int val)
            isr ? 1 : 0, s->intrstatus, s->intrmask);
     }
 
-    qemu_set_irq(d->irq[0], (isr != 0));
+    pci_set_irq(d, (isr != 0));
 }
 
 static void ivshmem_IntrMask_write(IVShmemState *s, uint32_t val)
@@ -684,8 +684,8 @@ static int pci_ivshmem_init(PCIDevice *dev)
     }
 
     if (s->role_val == IVSHMEM_PEER) {
-        error_set(&s->migration_blocker, QERR_DEVICE_FEATURE_BLOCKS_MIGRATION,
-                  "peer mode", "ivshmem");
+        error_setg(&s->migration_blocker,
+                   "Migration is disabled when using feature 'peer mode' in device 'ivshmem'");
         migrate_add_blocker(s->migration_blocker);
     }
 

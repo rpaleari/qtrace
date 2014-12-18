@@ -36,68 +36,6 @@ extern char boot_rom_bin_end;
 # define UNUSED
 #endif
 
-
-/*
- * These functions are just dummy implemented to resolve symbols for linking to other objects
- */
-
-int
-open(const char *name UNUSED, int flags UNUSED)
-{
-	return 0;
-}
-
-int
-close(int fd UNUSED)
-{
-	return 0;
-}
-
-ssize_t
-read(int fd UNUSED, void *buf UNUSED, size_t count UNUSED)
-{
-	return 0;
-}
-
-int
-ioctl(int fd UNUSED, int req UNUSED, void *data UNUSED)
-{
-	return 0;
-}
-
-/*
- * These functions are required for using libc.a
- */
-ssize_t
-write(int fd, const void *buf, size_t len)
-{
-	char  dst_buf[512];
-	char *dst_buf_ptr;
-	char *src_buf_ptr;
-	int i;
-
-	src_buf_ptr = (char *) buf;
-	if (fd == 1 || fd == 2)
-	{
-		dst_buf_ptr = &dst_buf[0];
-		for (i = 0; i < len && i < 256; i++)
-		{
-			*dst_buf_ptr++ = *src_buf_ptr++;
-			if (src_buf_ptr[-1] == '\n')
-				*dst_buf_ptr++ = '\r';
-		}
-		len = dst_buf_ptr - &dst_buf[0];
-		src_buf_ptr = &dst_buf[0];
-	}
-
-	if(fd < 0 || fd >= FILEIO_MAX
-	|| fd_array[fd].type == FILEIO_TYPE_EMPTY
-	|| fd_array[fd].write == 0)
-		return -1;
-
-	return fd_array[fd].write(&fd_array[fd], src_buf_ptr, len);
-}
-
 void *
 sbrk(int incr)
 {

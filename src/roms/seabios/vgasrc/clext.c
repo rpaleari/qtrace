@@ -5,14 +5,15 @@
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
-#include "clext.h" // clext_init
-#include "vgabios.h" // VBE_VENDOR_STRING
 #include "biosvar.h" // GET_GLOBAL
-#include "util.h" // dprintf
 #include "bregs.h" // struct bregs
+#include "clext.h" // clext_setup
+#include "hw/pci.h" // pci_config_readl
+#include "hw/pci_regs.h" // PCI_BASE_ADDRESS_0
+#include "output.h" // dprintf
 #include "stdvga.h" // VGAREG_SEQU_ADDRESS
-#include "pci.h" // pci_config_readl
-#include "pci_regs.h" // PCI_BASE_ADDRESS_0
+#include "string.h" // memset16_far
+#include "vgabios.h" // VBE_VENDOR_STRING
 
 
 /****************************************************************
@@ -328,17 +329,16 @@ clext_get_linelength(struct vgamode_s *vmode_g)
     u16 crtc_addr = stdvga_get_crtc();
     u8 reg13 = stdvga_crtc_read(crtc_addr, 0x13);
     u8 reg1b = stdvga_crtc_read(crtc_addr, 0x1b);
-    return (((reg1b & 0x10) << 4) + reg13) * stdvga_bpp_factor(vmode_g) * 2;
+    return (((reg1b & 0x10) << 4) + reg13) * 8 / stdvga_vram_ratio(vmode_g);
 }
 
 int
 clext_set_linelength(struct vgamode_s *vmode_g, int val)
 {
     u16 crtc_addr = stdvga_get_crtc();
-    int factor = stdvga_bpp_factor(vmode_g) * 2;
-    int new_line_offset = DIV_ROUND_UP(val, factor);
-    stdvga_crtc_write(crtc_addr, 0x13, new_line_offset);
-    stdvga_crtc_mask(crtc_addr, 0x1b, 0x10, (new_line_offset & 0x100) >> 4);
+    val = DIV_ROUND_UP(val * stdvga_vram_ratio(vmode_g), 8);
+    stdvga_crtc_write(crtc_addr, 0x13, val);
+    stdvga_crtc_mask(crtc_addr, 0x1b, 0x10, (val & 0x100) >> 4);
     return 0;
 }
 
@@ -352,14 +352,14 @@ clext_get_displaystart(struct vgamode_s *vmode_g)
     u8 b4 = stdvga_crtc_read(crtc_addr, 0x1d);
     int val = (b1 | (b2<<8) | ((b3 & 0x01) << 16) | ((b3 & 0x0c) << 15)
                | ((b4 & 0x80) << 12));
-    return val * stdvga_bpp_factor(vmode_g);
+    return val * 4 / stdvga_vram_ratio(vmode_g);
 }
 
 int
 clext_set_displaystart(struct vgamode_s *vmode_g, int val)
 {
     u16 crtc_addr = stdvga_get_crtc();
-    val /= stdvga_bpp_factor(vmode_g);
+    val = val * stdvga_vram_ratio(vmode_g) / 4;
     stdvga_crtc_write(crtc_addr, 0x0d, val);
     stdvga_crtc_write(crtc_addr, 0x0c, val >> 8);
     stdvga_crtc_mask(crtc_addr, 0x1d, 0x80, (val & 0x0800) >> 4);
@@ -369,27 +369,11 @@ clext_set_displaystart(struct vgamode_s *vmode_g, int val)
 }
 
 int
-clext_size_state(int states)
+clext_save_restore(int cmd, u16 seg, void *data)
 {
-    if (states & 8)
+    if (cmd & SR_REGISTERS)
         return -1;
-    return stdvga_size_state(states);
-}
-
-int
-clext_save_state(u16 seg, void *data, int states)
-{
-    if (states & 8)
-        return -1;
-    return stdvga_save_state(seg, data, states);
-}
-
-int
-clext_restore_state(u16 seg, void *data, int states)
-{
-    if (states & 8)
-        return -1;
-    return stdvga_restore_state(seg, data, states);
+    return stdvga_save_restore(cmd, seg, data);
 }
 
 
@@ -433,6 +417,7 @@ cirrus_switch_mode(struct cirrus_mode_s *table)
     else if (memmodel != MM_TEXT)
         on = 0x01;
     stdvga_attr_mask(0x10, 0x01, on);
+    stdvga_attrindex_write(0x20);
 }
 
 static void
@@ -442,14 +427,14 @@ cirrus_enable_16k_granularity(void)
 }
 
 static void
-cirrus_clear_vram(void)
+cirrus_clear_vram(u16 fill)
 {
     cirrus_enable_16k_granularity();
-    u8 count = GET_GLOBAL(VBE_total_memory) / (16 * 1024);
-    u8 i;
+    int count = GET_GLOBAL(VBE_total_memory) / (16 * 1024);
+    int i;
     for (i=0; i<count; i++) {
         stdvga_grdc_write(0x09, i);
-        memset16_far(SEG_GRAPH, 0, 0, 16 * 1024);
+        memset16_far(SEG_GRAPH, 0, fill, 16 * 1024);
     }
     stdvga_grdc_write(0x09, 0x00);
 }
@@ -465,10 +450,13 @@ clext_set_mode(struct vgamode_s *vmode_g, int flags)
     struct cirrus_mode_s *table_g = container_of(
         vmode_g, struct cirrus_mode_s, info);
     cirrus_switch_mode(table_g);
+    if (GET_GLOBAL(vmode_g->memmodel) == MM_PACKED && !(flags & MF_NOPALETTE))
+        stdvga_set_packed_palette();
     if (!(flags & MF_LINEARFB))
         cirrus_enable_16k_granularity();
     if (!(flags & MF_NOCLEARMEM))
-        cirrus_clear_vram();
+        // fill with 0xff to keep win 2K happy
+        cirrus_clear_vram(flags & MF_LEGACY ? 0xffff : 0x0000);
     return 0;
 }
 
@@ -603,9 +591,9 @@ cirrus_get_memsize(void)
 }
 
 int
-clext_init(void)
+clext_setup(void)
 {
-    int ret = stdvga_init();
+    int ret = stdvga_setup();
     if (ret)
         return ret;
 

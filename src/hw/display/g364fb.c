@@ -459,7 +459,6 @@ static const VMStateDescription vmstate_g364fb = {
     .name = "g364fb",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .post_load = g364fb_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_VBUFFER_UINT32(vram, G364State, 1, NULL, 0, vram_size),
@@ -484,7 +483,7 @@ static void g364fb_init(DeviceState *dev, G364State *s)
 {
     s->vram = g_malloc0(s->vram_size);
 
-    s->con = graphic_console_init(dev, &g364fb_ops, s);
+    s->con = graphic_console_init(dev, 0, &g364fb_ops, s);
 
     memory_region_init_io(&s->mem_ctrl, NULL, &g364fb_ctrl_ops, s, "ctrl", 0x180000);
     memory_region_init_ram_ptr(&s->mem_vram, NULL, "vram",
@@ -524,7 +523,7 @@ static void g364fb_sysbus_reset(DeviceState *d)
 }
 
 static Property g364fb_sysbus_properties[] = {
-    DEFINE_PROP_HEX32("vram_size", G364SysBusState, g364.vram_size,
+    DEFINE_PROP_UINT32("vram_size", G364SysBusState, g364.vram_size,
     8 * 1024 * 1024),
     DEFINE_PROP_END_OF_LIST(),
 };

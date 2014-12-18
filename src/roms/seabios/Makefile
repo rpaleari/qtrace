@@ -7,25 +7,52 @@
 # Output directory
 OUT=out/
 
+# Common command definitions
+export HOSTCC             := $(CC)
+export CONFIG_SHELL       := sh
+export KCONFIG_AUTOHEADER := autoconf.h
+export KCONFIG_CONFIG     := $(CURDIR)/.config
+CROSS_PREFIX=
+ifneq ($(CROSS_PREFIX),)
+CC=$(CROSS_PREFIX)gcc
+endif
+AS=$(CROSS_PREFIX)as
+LD=$(CROSS_PREFIX)ld
+OBJCOPY=$(CROSS_PREFIX)objcopy
+OBJDUMP=$(CROSS_PREFIX)objdump
+STRIP=$(CROSS_PREFIX)strip
+PYTHON=python
+CPP=cpp
+IASL:=iasl
+LD32BIT_FLAG:=-melf_i386
+
 # Source files
-SRCBOTH=misc.c stacks.c pmm.c output.c util.c block.c floppy.c ata.c mouse.c \
-    kbd.c pci.c serial.c clock.c pic.c cdrom.c ps2port.c smp.c resume.c \
-    pnpbios.c pirtable.c vgahooks.c ramdisk.c pcibios.c blockcmd.c \
-    usb.c usb-uhci.c usb-ohci.c usb-ehci.c usb-hid.c usb-msc.c \
-    virtio-ring.c virtio-pci.c virtio-blk.c virtio-scsi.c apm.c ahci.c \
-    usb-uas.c lsi-scsi.c esp-scsi.c megasas.c
+SRCBOTH=misc.c stacks.c output.c string.c x86.c block.c cdrom.c mouse.c kbd.c \
+    serial.c clock.c resume.c pnpbios.c vgahooks.c pcibios.c apm.c \
+    fw/smp.c \
+    hw/pci.c hw/timer.c hw/rtc.c hw/dma.c hw/pic.c hw/ps2port.c hw/serialio.c \
+    hw/usb.c hw/usb-uhci.c hw/usb-ohci.c hw/usb-ehci.c \
+    hw/usb-hid.c hw/usb-msc.c hw/usb-uas.c \
+    hw/blockcmd.c hw/floppy.c hw/ata.c hw/ramdisk.c \
+    hw/virtio-ring.c hw/virtio-pci.c hw/virtio-blk.c hw/virtio-scsi.c \
+    hw/lsi-scsi.c hw/esp-scsi.c hw/megasas.c
 SRC16=$(SRCBOTH) system.c disk.c font.c
-SRC32FLAT=$(SRCBOTH) post.c shadow.c memmap.c coreboot.c boot.c \
-    acpi.c smm.c mptable.c smbios.c pciinit.c optionroms.c mtrr.c \
-    lzmadecode.c bootsplash.c jpeg.c usb-hub.c paravirt.c \
-    biostables.c xen.c bmp.c romfile.c
-SRC32SEG=util.c output.c pci.c pcibios.c apm.c stacks.c
+SRC32FLAT=$(SRCBOTH) post.c memmap.c malloc.c pmm.c romfile.c optionroms.c \
+    boot.c bootsplash.c jpeg.c bmp.c \
+    hw/ahci.c hw/pvscsi.c hw/usb-xhci.c hw/usb-hub.c \
+    fw/coreboot.c fw/lzmadecode.c fw/csm.c fw/biostables.c \
+    fw/paravirt.c fw/shadow.c fw/pciinit.c fw/smm.c fw/mtrr.c fw/xen.c \
+    fw/acpi.c fw/mptable.c fw/pirtable.c fw/smbios.c fw/romfile_loader.c
+SRC32SEG=string.c output.c pcibios.c apm.c stacks.c hw/pci.c hw/serialio.c
+DIRS=src src/hw src/fw vgasrc
 
 # Default compiler flags
 cc-option=$(shell if test -z "`$(1) $(2) -S -o /dev/null -xc /dev/null 2>&1`" \
     ; then echo "$(2)"; else echo "$(3)"; fi ;)
 
-COMMONCFLAGS := -I$(OUT) -Os -MD -g \
+CPPFLAGS = -P -MD -MT $@
+
+COMMONCFLAGS := -I$(OUT) -Isrc -Os -MD -g \
     -Wall -Wno-strict-aliasing -Wold-style-definition \
     $(call cc-option,$(CC),-Wtype-limits,) \
     -m32 -march=i386 -mregparm=3 -mpreferred-stack-boundary=2 \
@@ -53,22 +80,13 @@ Q=@
 MAKEFLAGS += --no-print-directory
 endif
 
-# Common command definitions
-export HOSTCC             := $(CC)
-export CONFIG_SHELL       := sh
-export KCONFIG_AUTOHEADER := autoconf.h
-export KCONFIG_CONFIG     := $(CURDIR)/.config
-AS=as
-OBJCOPY=objcopy
-OBJDUMP=objdump
-STRIP=strip
-PYTHON=python
-IASL:=iasl
-
 # Default targets
 -include $(KCONFIG_CONFIG)
 
-target-y = $(OUT) $(OUT)bios.bin
+target-y :=
+target-$(CONFIG_QEMU) += $(OUT)bios.bin
+target-$(CONFIG_CSM) += $(OUT)Csm16.bin
+target-$(CONFIG_COREBOOT) += $(OUT)bios.bin.elf
 target-$(CONFIG_BUILD_VGABIOS) += $(OUT)vgabios.bin
 
 all: $(target-y)
@@ -77,14 +95,11 @@ all: $(target-y)
 .PHONY : all clean distclean FORCE
 .DELETE_ON_ERROR:
 
-vpath %.c src vgasrc
-vpath %.S src vgasrc
-
 
 ################ Common build rules
 
 # Verify the build environment works.
-TESTGCC:=$(shell OUT="$(OUT)" CC="$(CC)" LD="$(LD)" IASL="$(IASL)" tools/test-build.sh)
+TESTGCC:=$(shell OUT="$(OUT)" CC="$(CC)" LD="$(LD)" IASL="$(IASL)" scripts/test-build.sh)
 ifeq "$(TESTGCC)" "-1"
 $(error "Please upgrade the build environment")
 endif
@@ -115,39 +130,39 @@ $(OUT)%.o: %.c $(OUT)autoconf.h
 
 $(OUT)%.lds: %.lds.S
 	@echo "  Precompiling $@"
-	$(Q)$(CPP) -P -D__ASSEMBLY__ $< -o $@
+	$(Q)$(CPP) $(CPPFLAGS) -D__ASSEMBLY__ $< -o $@
 
 
 ################ Main BIOS build rules
 
 $(OUT)asm-offsets.s: $(OUT)autoconf.h
 
-$(OUT)asm-offsets.h: $(OUT)asm-offsets.s
+$(OUT)asm-offsets.h: $(OUT)src/asm-offsets.s
 	@echo "  Generating offset file $@"
-	$(Q)./tools/gen-offsets.sh $< $@
+	$(Q)./scripts/gen-offsets.sh $< $@
 
-$(OUT)ccode16.o: $(OUT)autoconf.h $(patsubst %.c, $(OUT)%.o,$(SRC16)) ; $(call whole-compile, $(CFLAGS16), $(addprefix src/, $(SRC16)),$@)
+$(OUT)ccode16.o: $(OUT)autoconf.h $(patsubst %.c, $(OUT)src/%.o,$(SRC16)) ; $(call whole-compile, $(CFLAGS16), $(addprefix src/, $(SRC16)),$@)
 
-$(OUT)code32seg.o: $(OUT)autoconf.h $(patsubst %.c, $(OUT)%.o,$(SRC32SEG)) ; $(call whole-compile, $(CFLAGS32SEG), $(addprefix src/, $(SRC32SEG)),$@)
+$(OUT)code32seg.o: $(OUT)autoconf.h $(patsubst %.c, $(OUT)src/%.o,$(SRC32SEG)) ; $(call whole-compile, $(CFLAGS32SEG), $(addprefix src/, $(SRC32SEG)),$@)
 
-$(OUT)ccode32flat.o: $(OUT)autoconf.h $(patsubst %.c, $(OUT)%.o,$(SRC32FLAT)) ; $(call whole-compile, $(CFLAGS32FLAT), $(addprefix src/, $(SRC32FLAT)),$@)
+$(OUT)ccode32flat.o: $(OUT)autoconf.h $(patsubst %.c, $(OUT)src/%.o,$(SRC32FLAT)) ; $(call whole-compile, $(CFLAGS32FLAT), $(addprefix src/, $(SRC32FLAT)),$@)
 
-$(OUT)romlayout.o: romlayout.S $(OUT)asm-offsets.h
+$(OUT)romlayout.o: src/romlayout.S $(OUT)autoconf.h $(OUT)asm-offsets.h
 	@echo "  Compiling (16bit) $@"
 	$(Q)$(CC) $(CFLAGS16) -c -D__ASSEMBLY__ $< -o $@
 
-$(OUT)romlayout16.lds: $(OUT)ccode32flat.o $(OUT)code32seg.o $(OUT)ccode16.o $(OUT)romlayout.o tools/layoutrom.py
+$(OUT)romlayout16.lds: $(OUT)ccode32flat.o $(OUT)code32seg.o $(OUT)ccode16.o $(OUT)romlayout.o scripts/layoutrom.py scripts/buildversion.sh
 	@echo "  Building ld scripts"
-	$(Q)./tools/buildversion.sh $(OUT)version.c
+	$(Q)./scripts/buildversion.sh $(OUT)version.c
 	$(Q)$(CC) $(CFLAGS32FLAT) -c $(OUT)version.c -o $(OUT)version.o
-	$(Q)$(LD) -melf_i386 -r $(OUT)ccode32flat.o $(OUT)version.o -o $(OUT)code32flat.o
-	$(Q)$(LD) -melf_i386 -r $(OUT)ccode16.o $(OUT)romlayout.o -o $(OUT)code16.o
+	$(Q)$(LD) $(LD32BIT_FLAG) -r $(OUT)ccode32flat.o $(OUT)version.o -o $(OUT)code32flat.o
+	$(Q)$(LD) $(LD32BIT_FLAG) -r $(OUT)ccode16.o $(OUT)romlayout.o -o $(OUT)code16.o
 	$(Q)$(OBJDUMP) -thr $(OUT)code32flat.o > $(OUT)code32flat.o.objdump
 	$(Q)$(OBJDUMP) -thr $(OUT)code32seg.o > $(OUT)code32seg.o.objdump
 	$(Q)$(OBJDUMP) -thr $(OUT)code16.o > $(OUT)code16.o.objdump
-	$(Q)$(PYTHON) ./tools/layoutrom.py $(OUT)code16.o.objdump $(OUT)code32seg.o.objdump $(OUT)code32flat.o.objdump $(OUT)romlayout16.lds $(OUT)romlayout32seg.lds $(OUT)romlayout32flat.lds
+	$(Q)$(PYTHON) ./scripts/layoutrom.py $(OUT)code16.o.objdump $(OUT)code32seg.o.objdump $(OUT)code32flat.o.objdump $(OUT)$(KCONFIG_AUTOHEADER) $(OUT)romlayout16.lds $(OUT)romlayout32seg.lds $(OUT)romlayout32flat.lds
 
-# These are actually built by tools/layoutrom.py above, but by pulling them
+# These are actually built by scripts/layoutrom.py above, but by pulling them
 # into an extra rule we prevent make -j from spawning layoutrom.py 4 times.
 $(OUT)romlayout32seg.lds $(OUT)romlayout32flat.lds $(OUT)code32flat.o $(OUT)code16.o: $(OUT)romlayout16.lds
 
@@ -163,48 +178,62 @@ $(OUT)rom.o: $(OUT)rom16.strip.o $(OUT)rom32seg.strip.o $(OUT)code32flat.o $(OUT
 	@echo "  Linking $@"
 	$(Q)$(LD) -T $(OUT)romlayout32flat.lds $(OUT)rom16.strip.o $(OUT)rom32seg.strip.o $(OUT)code32flat.o -o $@
 
-$(OUT)bios.bin.elf $(OUT)bios.bin: $(OUT)rom.o tools/checkrom.py
+$(OUT)bios.bin.prep: $(OUT)rom.o scripts/checkrom.py
 	@echo "  Prepping $@"
+	$(Q)rm -f $(OUT)bios.bin $(OUT)Csm16.bin $(OUT)bios.bin.elf
 	$(Q)$(OBJDUMP) -thr $< > $<.objdump
 	$(Q)$(OBJCOPY) -O binary $< $(OUT)bios.bin.raw
-	$(Q)$(PYTHON) ./tools/checkrom.py $<.objdump $(OUT)bios.bin.raw $(OUT)bios.bin
+	$(Q)$(PYTHON) ./scripts/checkrom.py $<.objdump $(CONFIG_ROM_SIZE) $(OUT)bios.bin.raw $(OUT)bios.bin.prep
+
+$(OUT)bios.bin: $(OUT)bios.bin.prep
+	@echo "  Creating $@"
+	$(Q)cp $< $@
+
+$(OUT)Csm16.bin: $(OUT)bios.bin.prep
+	@echo "  Creating $@"
+	$(Q)cp $< $@
+
+$(OUT)bios.bin.elf: $(OUT)rom.o $(OUT)bios.bin.prep
+	@echo "  Creating $@"
 	$(Q)$(STRIP) -R .comment $< -o $(OUT)bios.bin.elf
 
 
 ################ VGA build rules
 
 # VGA src files
-SRCVGA=src/output.c src/util.c src/pci.c \
-    vgasrc/vgabios.c vgasrc/vgafb.c vgasrc/vgafonts.c vgasrc/vbe.c \
+SRCVGA=src/output.c src/string.c src/hw/pci.c src/hw/serialio.c \
+    vgasrc/vgainit.c vgasrc/vgabios.c vgasrc/vgafb.c \
+    vgasrc/vgafonts.c vgasrc/vbe.c \
     vgasrc/stdvga.c vgasrc/stdvgamodes.c vgasrc/stdvgaio.c \
-    vgasrc/clext.c vgasrc/bochsvga.c vgasrc/geodevga.c
+    vgasrc/clext.c vgasrc/bochsvga.c vgasrc/geodevga.c \
+    src/fw/coreboot.c vgasrc/cbvga.c
 
 CFLAGS16VGA = $(CFLAGS16INC) -Isrc
 
-$(OUT)vgaccode16.raw.s: $(OUT)autoconf.h ; $(call whole-compile, $(CFLAGS16VGA) -S, $(SRCVGA),$@)
+$(OUT)vgaccode16.raw.s: $(OUT)autoconf.h $(patsubst %.c, $(OUT)%.o,$(SRCVGA)) ; $(call whole-compile, $(CFLAGS16VGA) -S, $(SRCVGA),$@)
 
-$(OUT)vgaccode16.o: $(OUT)vgaccode16.raw.s
+$(OUT)vgaccode16.o: $(OUT)vgaccode16.raw.s scripts/vgafixup.py
 	@echo "  Fixup VGA rom assembler"
-	$(Q)$(PYTHON) ./tools/vgafixup.py $< $(OUT)vgaccode16.s
+	$(Q)$(PYTHON) ./scripts/vgafixup.py $< $(OUT)vgaccode16.s
 	$(Q)$(AS) --32 src/code16gcc.s $(OUT)vgaccode16.s -o $@
 
-$(OUT)vgaentry.o: vgaentry.S $(OUT)autoconf.h
+$(OUT)vgaentry.o: vgasrc/vgaentry.S $(OUT)autoconf.h $(OUT)asm-offsets.h
 	@echo "  Compiling (16bit) $@"
 	$(Q)$(CC) $(CFLAGS16VGA) -c -D__ASSEMBLY__ $< -o $@
 
-$(OUT)vgarom.o: $(OUT)vgaccode16.o $(OUT)vgaentry.o $(OUT)vgalayout.lds
+$(OUT)vgarom.o: $(OUT)vgaccode16.o $(OUT)vgaentry.o $(OUT)vgasrc/vgalayout.lds scripts/buildversion.sh
 	@echo "  Linking $@"
-	$(Q)./tools/buildversion.sh $(OUT)vgaversion.c VAR16
+	$(Q)./scripts/buildversion.sh $(OUT)vgaversion.c VAR16
 	$(Q)$(CC) $(CFLAGS16VGA) -c $(OUT)vgaversion.c -o $(OUT)vgaversion.o
-	$(Q)$(LD) --gc-sections -T $(OUT)vgalayout.lds $(OUT)vgaccode16.o $(OUT)vgaentry.o $(OUT)vgaversion.o -o $@
+	$(Q)$(LD) --gc-sections -T $(OUT)vgasrc/vgalayout.lds $(OUT)vgaccode16.o $(OUT)vgaentry.o $(OUT)vgaversion.o -o $@
 
 $(OUT)vgabios.bin.raw: $(OUT)vgarom.o
 	@echo "  Extracting binary $@"
 	$(Q)$(OBJCOPY) -O binary $< $@
 
-$(OUT)vgabios.bin: $(OUT)vgabios.bin.raw tools/buildrom.py
+$(OUT)vgabios.bin: $(OUT)vgabios.bin.raw scripts/buildrom.py
 	@echo "  Finalizing rom $@"
-	$(Q)$(PYTHON) ./tools/buildrom.py $< $@
+	$(Q)$(PYTHON) ./scripts/buildrom.py $< $@
 
 
 ################ DSDT build rules
@@ -212,26 +241,27 @@ $(OUT)vgabios.bin: $(OUT)vgabios.bin.raw tools/buildrom.py
 iasl-option=$(shell if test -z "`$(1) $(2) 2>&1 > /dev/null`" \
     ; then echo "$(2)"; else echo "$(3)"; fi ;)
 
-$(OUT)%.hex: src/%.dsl ./tools/acpi_extract_preprocess.py ./tools/acpi_extract.py
+$(OUT)%.hex: %.dsl ./scripts/acpi_extract_preprocess.py ./scripts/acpi_extract.py
 	@echo "  Compiling IASL $@"
-	$(Q)cpp -P $< > $(OUT)$*.dsl.i.orig
-	$(Q)$(PYTHON) ./tools/acpi_extract_preprocess.py $(OUT)$*.dsl.i.orig > $(OUT)$*.dsl.i
+	$(Q)$(CPP) $(CPPFLAGS) $< -o $(OUT)$*.dsl.i.orig
+	$(Q)$(PYTHON) ./scripts/acpi_extract_preprocess.py $(OUT)$*.dsl.i.orig > $(OUT)$*.dsl.i
 	$(Q)$(IASL) $(call iasl-option,$(IASL),-Pn,) -vs -l -tc -p $(OUT)$* $(OUT)$*.dsl.i
-	$(Q)$(PYTHON) ./tools/acpi_extract.py $(OUT)$*.lst > $(OUT)$*.off
+	$(Q)$(PYTHON) ./scripts/acpi_extract.py $(OUT)$*.lst > $(OUT)$*.off
 	$(Q)cat $(OUT)$*.off > $@
 
-$(OUT)acpi.o: $(OUT)acpi-dsdt.hex $(OUT)ssdt-proc.hex $(OUT)ssdt-pcihp.hex $(OUT)ssdt-susp.hex $(OUT)q35-acpi-dsdt.hex
+$(OUT)src/fw/acpi.o: $(OUT)src/fw/acpi-dsdt.hex $(OUT)src/fw/ssdt-proc.hex $(OUT)src/fw/ssdt-pcihp.hex $(OUT)src/fw/ssdt-misc.hex $(OUT)src/fw/q35-acpi-dsdt.hex
 
 ################ Kconfig rules
 
 define do-kconfig
-$(Q)mkdir -p $(OUT)/tools/kconfig/lxdialog
+$(Q)mkdir -p $(OUT)/scripts/kconfig/lxdialog
 $(Q)mkdir -p $(OUT)/include/config
-$(Q)$(MAKE) -C $(OUT) -f $(CURDIR)/tools/kconfig/Makefile srctree=$(CURDIR) src=tools/kconfig obj=tools/kconfig Q=$(Q) Kconfig=$(CURDIR)/src/Kconfig $1
+$(Q)mkdir -p $(addprefix $(OUT), $(DIRS))
+$(Q)$(MAKE) -C $(OUT) -f $(CURDIR)/scripts/kconfig/Makefile srctree=$(CURDIR) src=scripts/kconfig obj=scripts/kconfig Q=$(Q) Kconfig=$(CURDIR)/src/Kconfig $1
 endef
 
 $(OUT)autoconf.h : $(KCONFIG_CONFIG) ; $(call do-kconfig, silentoldconfig)
-$(KCONFIG_CONFIG): ; $(call do-kconfig, defconfig)
+$(KCONFIG_CONFIG): src/Kconfig vgasrc/Kconfig ; $(call do-kconfig, olddefconfig)
 %onfig: ; $(call do-kconfig, $@)
 help: ; $(call do-kconfig, $@)
 
@@ -244,7 +274,4 @@ clean:
 distclean: clean
 	$(Q)rm -f .config .config.old
 
-$(OUT):
-	$(Q)mkdir $@
-
--include $(OUT)*.d
+-include $(patsubst %,$(OUT)%/*.d,$(DIRS))

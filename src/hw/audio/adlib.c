@@ -86,6 +86,7 @@ typedef struct {
 #ifndef HAS_YMF262
     FM_OPL *opl;
 #endif
+    PortioList port_list;
 } AdlibState;
 
 static AdlibState *glob_adlib;
@@ -173,7 +174,7 @@ static void timer_handler (int c, double interval_Sec)
     s->ticking[n] = 1;
 #ifdef DEBUG
     interval = get_ticks_per_sec () * interval_Sec;
-    exp = qemu_get_clock_ns (vm_clock) + interval;
+    exp = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + interval;
     s->exp[n] = exp;
 #endif
 
@@ -274,9 +275,7 @@ static void Adlib_fini (AdlibState *s)
     }
 #endif
 
-    if (s->mixbuf) {
-        g_free (s->mixbuf);
-    }
+    g_free(s->mixbuf);
 
     s->active = 0;
     s->enabled = 0;
@@ -284,16 +283,15 @@ static void Adlib_fini (AdlibState *s)
 }
 
 static MemoryRegionPortio adlib_portio_list[] = {
-    { 0x388, 4, 1, .read = adlib_read, .write = adlib_write, },
     { 0, 4, 1, .read = adlib_read, .write = adlib_write, },
     { 0, 2, 1, .read = adlib_read, .write = adlib_write, },
+    { 0x388, 4, 1, .read = adlib_read, .write = adlib_write, },
     PORTIO_END_OF_LIST(),
 };
 
 static void adlib_realizefn (DeviceState *dev, Error **errp)
 {
     AdlibState *s = ADLIB(dev);
-    PortioList *port_list = g_new(PortioList, 1);
     struct audsettings as;
 
     if (glob_adlib) {
@@ -347,14 +345,14 @@ static void adlib_realizefn (DeviceState *dev, Error **errp)
     s->samples = AUD_get_buffer_size_out (s->voice) >> SHIFT;
     s->mixbuf = g_malloc0 (s->samples << SHIFT);
 
-    adlib_portio_list[1].offset = s->port;
-    adlib_portio_list[2].offset = s->port + 8;
-    portio_list_init (port_list, OBJECT(s), adlib_portio_list, s, "adlib");
-    portio_list_add (port_list, isa_address_space_io(&s->parent_obj), 0);
+    adlib_portio_list[0].offset = s->port;
+    adlib_portio_list[1].offset = s->port + 8;
+    portio_list_init (&s->port_list, OBJECT(s), adlib_portio_list, s, "adlib");
+    portio_list_add (&s->port_list, isa_address_space_io(&s->parent_obj), 0);
 }
 
 static Property adlib_properties[] = {
-    DEFINE_PROP_HEX32  ("iobase",  AdlibState, port, 0x220),
+    DEFINE_PROP_UINT32 ("iobase",  AdlibState, port, 0x220),
     DEFINE_PROP_UINT32 ("freq",    AdlibState, freq,  44100),
     DEFINE_PROP_END_OF_LIST (),
 };

@@ -18,7 +18,7 @@
  */
 
 #include "cpu.h"
-#include "helper.h"
+#include "exec/helper-proto.h"
 
 const uint8_t parity_table[256] = {
     CC_P, 0, 0, CC_P, 0, CC_P, CC_P, 0,
@@ -103,7 +103,7 @@ target_ulong helper_cc_compute_all(target_ulong dst, target_ulong src1,
     case CC_OP_EFLAGS:
         return src1;
     case CC_OP_CLR:
-        return CC_Z;
+        return CC_Z | CC_P;
 
     case CC_OP_MULB:
         return compute_all_mulb(dst, src1);

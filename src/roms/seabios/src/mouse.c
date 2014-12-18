@@ -6,13 +6,15 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "biosvar.h" // GET_EBDA
-#include "util.h" // dprintf
 #include "bregs.h" // struct bregs
-#include "ps2port.h" // ps2_mouse_command
-#include "usb-hid.h" // usb_mouse_command
+#include "hw/ps2port.h" // ps2_mouse_command
+#include "hw/usb-hid.h" // usb_mouse_command
+#include "output.h" // dprintf
+#include "stacks.h" // stack_hop
+#include "util.h" // mouse_init
 
 void
-mouse_setup(void)
+mouse_init(void)
 {
     if (! CONFIG_MOUSE)
         return;

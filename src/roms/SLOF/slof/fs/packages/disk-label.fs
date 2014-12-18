@@ -18,13 +18,14 @@ false VALUE debug-disk-label?
 \ partition. This is required to keep the load time in reasonable limits if the
 \ PREP partition becomes big.
 \ If we ever want to put a large kernel with initramfs from a PREP partition
-\ we might need to increase this value. The default value is 16384 blocks (8MB)
-d# 16384 value max-prep-partition-blocks
+\ we might need to increase this value. The default value is 65536 blocks (32MB)
+d# 65536 value max-prep-partition-blocks
 
 s" disk-label" device-name
 
 0 INSTANCE VALUE partition
 0 INSTANCE VALUE part-offset
+0 INSTANCE VALUE disk-chrp-boot
 
 0 INSTANCE VALUE part-start
 0 INSTANCE VALUE lpart-start
@@ -36,6 +37,9 @@ s" disk-label" device-name
 
 0 INSTANCE VALUE args
 0 INSTANCE VALUE args-len
+
+0 INSTANCE VALUE gpt-part-size
+0 INSTANCE VALUE seek-pos
 
 
 INSTANCE VARIABLE block#  \ variable to store logical sector#
@@ -73,6 +77,34 @@ STRUCT
 
 CONSTANT /partition-entry
 
+STRUCT
+        8 field gpt>signature
+        4 field gpt>revision
+        4 field gpt>header-size
+        4 field gpt>header-crc32
+        4 field gpt>reserved
+        8 field gpt>current-lba
+        8 field gpt>backup-lba
+        8 field gpt>first-lba
+        8 field gpt>last-lba
+       10 field gpt>disk-guid
+        8 field gpt>part-entry-lba
+        4 field gpt>num-part-entry
+        4 field gpt>part-entry-size
+        4 field gpt>part-array-crc32
+      1a4 field gpt>reserved
+
+CONSTANT /gpt-header
+
+STRUCT
+       10 field gpt-part-entry>part-type-guid
+       10 field gpt-part-entry>part-guid
+        8 field gpt-part-entry>first-lba
+        8 field gpt-part-entry>last-lba
+        8 field gpt-part-entry>attribute
+       48 field gpt-part-entry>part-name
+
+CONSTANT /gpt-part-entry
 
 \ Defined by IEEE 1275-1994 (3.8.1)
 
@@ -120,26 +152,12 @@ CONSTANT /partition-entry
 : init-block ( -- )
    s" block-size" ['] $call-parent CATCH IF ABORT" parent has no block-size." THEN
    to block-size
-   d# 2048 alloc-mem
-   dup d# 2048 erase
+   d# 4096 alloc-mem
+   dup d# 4096 erase
    to block
    debug-disk-label? IF
       ." init-block: block-size=" block-size .d ." block=0x" block u. cr
    THEN
-;
-
-
-\ This word returns true if the currently loaded block has _NO_ MBR magic
-: no-mbr? ( -- true|false )
-   0 read-sector block mbr>magic w@-le aa55 <>
-;
-
-: pc-extended-partition? ( part-entry-addr -- true|false )
-   part-entry>id c@      ( id )
-   dup 5 = swap          ( true|false id )
-   dup f = swap          ( true|false true|false id )
-   85 =                  ( true|false true|false true|false )
-   or or                 ( true|false )
 ;
 
 : partition>part-entry ( partition -- part-entry )
@@ -148,6 +166,27 @@ CONSTANT /partition-entry
 
 : partition>start-sector ( partition -- sector-offset )
    partition>part-entry part-entry>sector-offset l@-le
+;
+
+\ This word returns true if the currently loaded block has _NO_ MBR magic
+: no-mbr? ( -- true|false )
+   0 read-sector
+   1 partition>part-entry part-entry>id c@ ee = IF TRUE EXIT THEN \ GPT partition found
+   block mbr>magic w@-le aa55 <>
+;
+
+\ This word returns true if the currently loaded block has _NO_ GPT partition id
+: no-gpt? ( -- true|false )
+   0 read-sector
+   1 partition>part-entry part-entry>id c@ ee <>
+;
+
+: pc-extended-partition? ( part-entry-addr -- true|false )
+   part-entry>id c@      ( id )
+   dup 5 = swap          ( true|false id )
+   dup f = swap          ( true|false true|false id )
+   85 =                  ( true|false true|false true|false )
+   or or                 ( true|false )
 ;
 
 : count-dos-logical-partitions ( -- #logical-partitions )
@@ -284,7 +323,7 @@ CONSTANT /partition-entry
 \ NOTE: block-size is always 512 bytes for DOS partition tables.
 
 : load-from-dos-boot-partition ( addr -- size )
-   no-mbr? IF FALSE EXIT THEN  \ read MBR and check for DOS disk-label magic
+   no-mbr? IF drop FALSE EXIT THEN  \ read MBR and check for DOS disk-label magic
 
    count-dos-logical-partitions TO dos-logical-partitions
 
@@ -313,15 +352,61 @@ CONSTANT /partition-entry
    drop 0
 ;
 
+\ Check for GPT PReP partition GUID
+9E1A2D38     CONSTANT GPT-PREP-PARTITION-1
+C612         CONSTANT GPT-PREP-PARTITION-2
+4316         CONSTANT GPT-PREP-PARTITION-3
+AA26         CONSTANT GPT-PREP-PARTITION-4
+8B49521E5A8B CONSTANT GPT-PREP-PARTITION-5
 
-\ load from a bootable partition
-
-: load-from-boot-partition ( addr -- size )
-   load-from-dos-boot-partition
-   \ More boot partition formats ...
+: gpt-prep-partition? ( -- true|false )
+   block gpt-part-entry>part-type-guid l@-le GPT-PREP-PARTITION-1 = IF
+      block gpt-part-entry>part-type-guid 4 + w@-le
+      GPT-PREP-PARTITION-2 = IF
+         block gpt-part-entry>part-type-guid 6 + w@-le
+         GPT-PREP-PARTITION-3 = IF
+            block gpt-part-entry>part-type-guid 8 + w@
+            GPT-PREP-PARTITION-4 = IF
+               block gpt-part-entry>part-type-guid a + w@
+               block gpt-part-entry>part-type-guid c + l@ swap lxjoin
+               GPT-PREP-PARTITION-5 = IF
+                   TRUE EXIT
+               THEN
+            THEN
+         THEN
+      THEN
+   THEN
+   FALSE
 ;
 
-
+: load-from-gpt-prep-partition ( addr -- size )
+   no-gpt? IF drop FALSE EXIT THEN
+   debug-disk-label? IF
+      cr ." GPT partition found " cr
+   THEN
+   1 read-sector block gpt>part-entry-lba l@-le
+   block-size * to seek-pos
+   block gpt>part-entry-size l@-le to gpt-part-size
+   block gpt>num-part-entry l@-le dup 0= IF FALSE EXIT THEN
+   1+ 1 ?DO
+      seek-pos 0 seek drop
+      block gpt-part-size read drop gpt-prep-partition? IF
+         debug-disk-label? IF
+            ." GPT PReP partition found " cr
+         THEN
+         block gpt-part-entry>first-lba x@ xbflip
+         block gpt-part-entry>last-lba x@ xbflip
+         over - 1+                 ( addr offset len )
+         swap                      ( addr len offset )
+         block-size * to part-offset
+         0 0 seek drop             ( addr len )
+         block-size * read         ( size )
+         UNLOOP EXIT
+      THEN
+      seek-pos gpt-part-size i * + to seek-pos
+   LOOP
+   FALSE
+;
 
 \ Extract the boot loader path from a bootinfo.txt file
 \ In: address and length of buffer where the bootinfo.txt has been loaded to.
@@ -368,8 +453,12 @@ CONSTANT /partition-entry
 
 : load-chrp-boot-file ( addr -- size )
    \ Create bootinfo.txt path name and load that file:
-   my-parent ihandle>phandle node>path
-   s" :\ppc\bootinfo.txt" $cat strdup       ( addr str len )
+   my-parent instance>path
+   disk-chrp-boot @ 1 = IF
+       s" :1,\ppc\bootinfo.txt" $cat strdup       ( addr str len )
+   ELSE
+       s" :\ppc\bootinfo.txt" $cat strdup       ( addr str len )
+   THEN
    open-dev dup 0= IF 2drop 0 EXIT THEN
    >r dup                                   ( addr addr R:ihandle )
    dup s" load" r@ $call-method             ( addr addr size R:ihandle )
@@ -387,7 +476,7 @@ CONSTANT /partition-entry
    THEN
 
    \ Create the full path to the boot loader:
-   my-parent ihandle>phandle node>path      ( addr fnstr fnlen nstr nlen )
+   my-parent instance>path      ( addr fnstr fnlen nstr nlen )
    s" :" $cat 2swap $cat strdup             ( addr str len )
    \ Update the bootpath:
    2dup encode-string s" bootpath" set-chosen
@@ -395,6 +484,21 @@ CONSTANT /partition-entry
    open-dev dup 0= IF ." failed to load CHRP boot loader." 2drop 0 EXIT THEN
    >r s" load" r@ $call-method              ( size R:ihandle )
    r> close-dev                             ( size )
+;
+
+\ load from a bootable partition
+: load-from-boot-partition ( addr -- size )
+   debug-disk-label? IF ." Trying DOS boot " .s cr THEN
+   dup load-from-dos-boot-partition ?dup 0 <> IF nip EXIT THEN
+
+   debug-disk-label? IF ." Trying CHRP boot " .s cr THEN
+   1 disk-chrp-boot !
+   dup load-chrp-boot-file ?dup 0 <> IF .s cr nip EXIT THEN
+   0 disk-chrp-boot !
+
+   debug-disk-label? IF ." Trying GPT boot " .s cr THEN
+   load-from-gpt-prep-partition
+   \ More boot partition formats ...
 ;
 
 \ parse partition number from my-args
@@ -506,7 +610,7 @@ CONSTANT /partition-entry
 
 : close ( -- )
    debug-disk-label? IF ." Closing disk-label: block=0x" block u. ." block-size=" block-size .d cr THEN
-   block d# 2048 free-mem
+   block d# 4096 free-mem
 ;
 
 
@@ -550,7 +654,7 @@ CONSTANT /partition-entry
              dup load-chrp-boot-file ?dup 0 > IF nip EXIT THEN
          THEN
          load-from-boot-partition
-         dup 0= ABORT" No boot partition found"
+	 dup 0= ABORT" No boot partition found"
       THEN
    THEN
 ;

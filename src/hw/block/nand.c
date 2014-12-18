@@ -346,10 +346,9 @@ static const VMStateDescription vmstate_nand = {
     .name = "nand",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .pre_save = nand_pre_save,
     .post_load = nand_post_load,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8(cle, NANDFlashState),
         VMSTATE_UINT8(ale, NANDFlashState),
         VMSTATE_UINT8(ce, NANDFlashState),
@@ -632,7 +631,7 @@ DeviceState *nand_init(BlockDriverState *bdrv, int manf_id, int chip_id)
     if (nand_flash_ids[chip_id].size == 0) {
         hw_error("%s: Unsupported NAND chip ID.\n", __FUNCTION__);
     }
-    dev = qdev_create(NULL, "nand");
+    dev = DEVICE(object_new(TYPE_NAND));
     qdev_prop_set_uint8(dev, "manufacturer_id", manf_id);
     qdev_prop_set_uint8(dev, "chip_id", chip_id);
     if (bdrv) {

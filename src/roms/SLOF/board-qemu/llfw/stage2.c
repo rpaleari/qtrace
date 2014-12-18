@@ -23,6 +23,7 @@
 #include <cpu.h>
 #include <libelf.h>
 #include <string.h>
+#include "../lib/libhvcall/libhvcall.h"
 
 #define DEBUG(fmt...)
 //#define DEBUG(fmt...) printf(fmt)
@@ -101,6 +102,8 @@ static void load_file(uint64_t destAddr, char *name, uint64_t maxSize,
 	flush_cache((void *) destAddr, fileInfo.size_data);
 }
 
+extern void print_version(void);
+
 /***************************************************************************
  * Function: early_c_entry
  * Input   : start_addr
@@ -118,6 +121,20 @@ void early_c_entry(uint64_t start_addr, uint64_t fdt_addr)
 	// uint64_t flashlen = header->flashlen;
 	unsigned long ofw_addr[2];
 	int rc;
+	extern char __executable_start;
+	extern char __etext;
+
+	/*
+	 * If we run on a broken environment, we need to patch our own sc 1
+	 * calls to be able to trap hypercalls. This does not cover RTAS or
+	 * any payload we will load yet.
+	 */
+	if (patch_broken_sc1(&__executable_start, &__etext, NULL)) {
+		/* We are running in PR KVM on top of pHyp. Print all output
+		   we missed to print so far again to fake identical behavior */
+		printf("\n\r\nSLOF");
+		print_version();
+	}
 
 	if (fdt_addr == 0) {
 		puts("ERROR: Flatten device tree not available!");

@@ -94,23 +94,21 @@ static const VMStateDescription vmstate_pl110 = {
 static const unsigned char pl110_id[] =
 { 0x10, 0x11, 0x04, 0x00, 0x0d, 0xf0, 0x05, 0xb1 };
 
-/* The Arm documentation (DDI0224C) says the CLDC on the Versatile board
-   has a different ID.  However Linux only looks for the normal ID.  */
-#if 0
-static const unsigned char pl110_versatile_id[] =
-{ 0x93, 0x10, 0x04, 0x00, 0x0d, 0xf0, 0x05, 0xb1 };
-#else
-#define pl110_versatile_id pl110_id
-#endif
-
 static const unsigned char pl111_id[] = {
     0x11, 0x11, 0x24, 0x00, 0x0d, 0xf0, 0x05, 0xb1
 };
 
+
 /* Indexed by pl110_version */
 static const unsigned char *idregs[] = {
     pl110_id,
-    pl110_versatile_id,
+    /* The ARM documentation (DDI0224C) says the CLCDC on the Versatile board
+     * has a different ID (0x93, 0x10, 0x04, 0x00, ...). However the hardware
+     * itself has the same ID values as a stock PL110, and guests (in
+     * particular Linux) rely on this. We emulate what the hardware does,
+     * rather than what the docs claim it ought to do.
+     */
+    pl110_id,
     pl111_id
 };
 
@@ -466,7 +464,7 @@ static int pl110_initfn(SysBusDevice *sbd)
     sysbus_init_mmio(sbd, &s->iomem);
     sysbus_init_irq(sbd, &s->irq);
     qdev_init_gpio_in(dev, pl110_mux_ctrl_set, 1);
-    s->con = graphic_console_init(dev, &pl110_gfx_ops, s);
+    s->con = graphic_console_init(dev, 0, &pl110_gfx_ops, s);
     return 0;
 }
 
@@ -498,7 +496,6 @@ static void pl110_class_init(ObjectClass *klass, void *data)
 
     k->init = pl110_initfn;
     set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
-    dc->no_user = 1;
     dc->vmsd = &vmstate_pl110;
 }
 

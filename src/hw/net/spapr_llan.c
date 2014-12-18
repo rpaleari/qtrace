@@ -29,6 +29,7 @@
 #include "hw/qdev.h"
 #include "hw/ppc/spapr.h"
 #include "hw/ppc/spapr_vio.h"
+#include "sysemu/sysemu.h"
 
 #include <libfdt.h>
 
@@ -212,6 +213,8 @@ static int spapr_vlan_init(VIOsPAPRDevice *sdev)
     dev->nic = qemu_new_nic(&net_spapr_vlan_info, &dev->nicconf,
                             object_get_typename(OBJECT(sdev)), sdev->qdev.id, dev);
     qemu_format_nic_info_str(qemu_get_queue(dev->nic), dev->nicconf.macaddr.a);
+
+    add_boot_device_path(dev->nicconf.bootindex, DEVICE(dev), "");
 
     return 0;
 }
@@ -405,6 +408,8 @@ static target_ulong h_add_logical_lan_buffer(PowerPCCPU *cpu,
 
     dev->rx_bufs++;
 
+    qemu_flush_queued_packets(qemu_get_queue(dev->nic));
+
     DPRINTF("h_add_logical_lan_buffer():  Added buf  ptr=%d  rx_bufs=%d"
             " bd=0x%016llx\n", dev->add_buf_ptr, dev->rx_bufs,
             (unsigned long long)buf);
@@ -504,8 +509,7 @@ static const VMStateDescription vmstate_spapr_llan = {
     .name = "spapr_llan",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_SPAPR_VIO(sdev, VIOsPAPRVLANDevice),
         /* LLAN state */
         VMSTATE_BOOL(isopen, VIOsPAPRVLANDevice),
@@ -531,6 +535,7 @@ static void spapr_vlan_class_init(ObjectClass *klass, void *data)
     k->dt_type = "network";
     k->dt_compatible = "IBM,l-lan";
     k->signal_mask = 0x1;
+    set_bit(DEVICE_CATEGORY_NETWORK, dc->categories);
     dc->props = spapr_vlan_properties;
     k->rtce_window_size = 0x10000000;
     dc->vmsd = &vmstate_spapr_llan;

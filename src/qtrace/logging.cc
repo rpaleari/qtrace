@@ -39,12 +39,14 @@ void qtrace_log_(const char *f, unsigned int l, const char *tag,
 
   char pc[32];
 
-#if defined(LOG_PC) && defined(CONFIG_QTRACE_SYSCALL)
-  CpuRegisters regs;
-  if (gbl_context.cb_regs && gbl_context.cb_regs(&regs) == 0) {
-    snprintf(pc, sizeof(pc), "@%.8x ", regs.pc);
-  } else {
-    snprintf(pc, sizeof(pc), "@_unknown ");
+#if defined(LOG_PC) && defined(CONFIG_QTRACE_TRACER)
+  {
+    target_ulong tmp_pc;
+    if (gbl_context.cb_regs && gbl_context.cb_regs(RegisterPc, &tmp_pc) == 0) {
+      snprintf(pc, sizeof(pc), "@%.8lx ", tmp_pc);
+    } else {
+      snprintf(pc, sizeof(pc), "@_unknown ");
+    }
   }
 #else
   pc[0] = '\0';

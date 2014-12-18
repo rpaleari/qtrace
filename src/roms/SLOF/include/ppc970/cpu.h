@@ -86,14 +86,24 @@ clr_ci(void)
 	asm volatile(EXPAND(CLRCI(%0)) : "=r"(tmp) :: "memory", "cc");
 }
 
-static inline void
-eieio(void)
+static inline void eieio(void)
 {
 	asm volatile ("eieio":::"memory");
 }
 
-static inline void
-flush_cache(void* r, long n)
+static inline void barrier(void)
+{
+	asm volatile("" : : : "memory");
+}
+#define cpu_relax() barrier()
+
+static inline void sync(void)
+{
+	asm volatile ("sync" ::: "memory");
+}
+#define mb() sync()
+
+static inline void flush_cache(void* r, long n)
 {
 	asm volatile(EXPAND(FLUSH_CACHE(%0, %1)) : "+r"(r), "+r"(n) :: "memory", "cc", "r0", "ctr");
 }

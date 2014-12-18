@@ -23,7 +23,9 @@
  */
 #include "hw/hw.h"
 #include "hw/loader.h"
+#include "trace.h"
 #include "ui/console.h"
+#include "ui/vnc.h"
 #include "hw/pci/pci.h"
 
 #undef VERBOSE
@@ -217,7 +219,7 @@ enum {
 
 /* These values can probably be changed arbitrarily.  */
 #define SVGA_SCRATCH_SIZE               0x8000
-#define SVGA_MAX_WIDTH                  2360
+#define SVGA_MAX_WIDTH                  ROUND_UP(2360, VNC_DIRTY_PIXELS_PER_BIT)
 #define SVGA_MAX_HEIGHT                 1770
 
 #ifdef VERBOSE
@@ -861,7 +863,7 @@ static uint32_t vmsvga_value_read(void *opaque, uint32_t address)
         break;
 
     case SVGA_REG_CURSOR_Y:
-        ret = s->cursor.x;
+        ret = s->cursor.y;
         break;
 
     case SVGA_REG_CURSOR_ON:
@@ -1150,9 +1152,8 @@ static const VMStateDescription vmstate_vmware_vga_internal = {
     .name = "vmware_vga_internal",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .post_load = vmsvga_post_load,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_INT32_EQUAL(new_depth, struct vmsvga_state_s),
         VMSTATE_INT32(enable, struct vmsvga_state_s),
         VMSTATE_INT32(config, struct vmsvga_state_s),
@@ -1177,8 +1178,7 @@ static const VMStateDescription vmstate_vmware_vga = {
     .name = "vmware_vga",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(parent_obj, struct pci_vmsvga_state_s),
         VMSTATE_STRUCT(chip, struct pci_vmsvga_state_s, 0,
                        vmstate_vmware_vga_internal, struct vmsvga_state_s),
@@ -1198,14 +1198,14 @@ static void vmsvga_init(DeviceState *dev, struct vmsvga_state_s *s,
     s->scratch_size = SVGA_SCRATCH_SIZE;
     s->scratch = g_malloc(s->scratch_size * 4);
 
-    s->vga.con = graphic_console_init(dev, &vmsvga_ops, s);
+    s->vga.con = graphic_console_init(dev, 0, &vmsvga_ops, s);
 
     s->fifo_size = SVGA_FIFO_SIZE;
     memory_region_init_ram(&s->fifo_ram, NULL, "vmsvga.fifo", s->fifo_size);
     vmstate_register_ram_global(&s->fifo_ram);
     s->fifo_ptr = memory_region_get_ram_ptr(&s->fifo_ram);
 
-    vga_common_init(&s->vga, OBJECT(dev));
+    vga_common_init(&s->vga, OBJECT(dev), true);
     vga_init(&s->vga, OBJECT(dev), address_space, io, true);
     vmstate_register(NULL, 0, &vmstate_vga_common, &s->vga);
     s->new_depth = 32;
@@ -1295,7 +1295,6 @@ static void vmsvga_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
 
-    k->no_hotplug = 1;
     k->init = pci_vmsvga_initfn;
     k->romfile = "vgabios-vmware.bin";
     k->vendor_id = PCI_VENDOR_ID_VMWARE;
@@ -1306,6 +1305,7 @@ static void vmsvga_class_init(ObjectClass *klass, void *data)
     dc->reset = vmsvga_reset;
     dc->vmsd = &vmstate_vmware_vga;
     dc->props = vga_vmware_properties;
+    dc->hotpluggable = false;
     set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
 }
 

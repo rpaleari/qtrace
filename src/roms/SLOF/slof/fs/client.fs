@@ -121,6 +121,11 @@ ALSO client-voc DEFINITIONS
    debug-client-interface? IF
       ." ci: finddevice " 2dup type cr
    THEN
+   2dup " /memory" str= IF
+     \ Workaround: grub passes /memory instead of /memory@0
+     2drop
+     " /memory@0"
+   THEN
    find-node dup 0= IF drop -1 THEN
 ;
 
@@ -157,7 +162,18 @@ ALSO client-voc DEFINITIONS
 
 \ VERY HACKISH
 : canon ( zstr buf len -- len' )
-  over >r move r> zcount nip ;
+   2dup erase
+   >r >r zcount
+   >r dup c@ [char] / = IF
+      r> r> swap r> over >r min move r>
+   ELSE
+      r> find-alias ?dup 0= IF
+         r> r> 2drop -1
+      ELSE
+         dup -rot r> swap r> min move
+      THEN
+   THEN
+;
 
 : nextprop ( phandle zstr buf -- flag ) \ -1 invalid, 0 end, 1 ok
   >r zcount rot next-property IF r> zplace 1 ELSE r> drop 0 THEN ; 
@@ -171,10 +187,21 @@ ALSO client-voc DEFINITIONS
 ;
 
 : close ( ihandle -- )
-   debug-client-interface? IF
-      ." ci: close " dup . cr
-   THEN
-   close-dev
+    debug-client-interface? IF
+	." ci: close " dup . cr
+    THEN
+    s" stdin" get-chosen IF
+	decode-int nip nip over = IF
+	    \ End of life of SLOF now, call platform quiesce as quiesce
+	    \ is an undocumented extension and not everybody supports it
+	    close-dev
+	    quiesce
+	ELSE
+	    close-dev
+	THEN
+    ELSE
+	close-dev
+    THEN
 ;
 
 \ Now implemented: should return -1 if no such method exists in that node

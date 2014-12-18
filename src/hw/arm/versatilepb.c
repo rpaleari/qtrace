@@ -173,12 +173,11 @@ static int vpb_sic_init(SysBusDevice *sbd)
 
 static struct arm_boot_info versatile_binfo;
 
-static void versatile_init(QEMUMachineInitArgs *args, int board_id)
+static void versatile_init(MachineState *machine, int board_id)
 {
     ARMCPU *cpu;
     MemoryRegion *sysmem = get_system_memory();
     MemoryRegion *ram = g_new(MemoryRegion, 1);
-    qemu_irq *cpu_pic;
     qemu_irq pic[32];
     qemu_irq sic[32];
     DeviceState *dev, *sysctl;
@@ -186,20 +185,20 @@ static void versatile_init(QEMUMachineInitArgs *args, int board_id)
     DeviceState *pl041;
     PCIBus *pci_bus;
     NICInfo *nd;
-    i2c_bus *i2c;
+    I2CBus *i2c;
     int n;
     int done_smc = 0;
     DriveInfo *dinfo;
 
-    if (!args->cpu_model) {
-        args->cpu_model = "arm926";
+    if (!machine->cpu_model) {
+        machine->cpu_model = "arm926";
     }
-    cpu = cpu_arm_init(args->cpu_model);
+    cpu = cpu_arm_init(machine->cpu_model);
     if (!cpu) {
         fprintf(stderr, "Unable to find CPU definition\n");
         exit(1);
     }
-    memory_region_init_ram(ram, NULL, "versatile.ram", args->ram_size);
+    memory_region_init_ram(ram, NULL, "versatile.ram", machine->ram_size);
     vmstate_register_ram_global(ram);
     /* ??? RAM should repeat to fill physical memory space.  */
     /* SDRAM at address zero.  */
@@ -211,10 +210,10 @@ static void versatile_init(QEMUMachineInitArgs *args, int board_id)
     qdev_init_nofail(sysctl);
     sysbus_mmio_map(SYS_BUS_DEVICE(sysctl), 0, 0x10000000);
 
-    cpu_pic = arm_pic_init_cpu(cpu);
     dev = sysbus_create_varargs("pl190", 0x10140000,
-                                cpu_pic[ARM_PIC_CPU_IRQ],
-                                cpu_pic[ARM_PIC_CPU_FIQ], NULL);
+                                qdev_get_gpio_in(DEVICE(cpu), ARM_CPU_IRQ),
+                                qdev_get_gpio_in(DEVICE(cpu), ARM_CPU_FIQ),
+                                NULL);
     for (n = 0; n < 32; n++) {
         pic[n] = qdev_get_gpio_in(dev, n);
     }
@@ -289,7 +288,7 @@ static void versatile_init(QEMUMachineInitArgs *args, int board_id)
     sysbus_create_simple("pl031", 0x101e8000, pic[10]);
 
     dev = sysbus_create_simple("versatile_i2c", 0x10002000, NULL);
-    i2c = (i2c_bus *)qdev_get_child_bus(dev, "i2c");
+    i2c = (I2CBus *)qdev_get_child_bus(dev, "i2c");
     i2c_create_slave(i2c, "ds1338", 0x68);
 
     /* Add PL041 AACI Interface to the LM4549 codec */
@@ -345,22 +344,22 @@ static void versatile_init(QEMUMachineInitArgs *args, int board_id)
         fprintf(stderr, "qemu: Error registering flash memory.\n");
     }
 
-    versatile_binfo.ram_size = args->ram_size;
-    versatile_binfo.kernel_filename = args->kernel_filename;
-    versatile_binfo.kernel_cmdline = args->kernel_cmdline;
-    versatile_binfo.initrd_filename = args->initrd_filename;
+    versatile_binfo.ram_size = machine->ram_size;
+    versatile_binfo.kernel_filename = machine->kernel_filename;
+    versatile_binfo.kernel_cmdline = machine->kernel_cmdline;
+    versatile_binfo.initrd_filename = machine->initrd_filename;
     versatile_binfo.board_id = board_id;
     arm_load_kernel(cpu, &versatile_binfo);
 }
 
-static void vpb_init(QEMUMachineInitArgs *args)
+static void vpb_init(MachineState *machine)
 {
-    versatile_init(args, 0x183);
+    versatile_init(machine, 0x183);
 }
 
-static void vab_init(QEMUMachineInitArgs *args)
+static void vab_init(MachineState *machine)
 {
-    versatile_init(args, 0x25e);
+    versatile_init(machine, 0x25e);
 }
 
 static QEMUMachine versatilepb_machine = {
@@ -368,7 +367,6 @@ static QEMUMachine versatilepb_machine = {
     .desc = "ARM Versatile/PB (ARM926EJ-S)",
     .init = vpb_init,
     .block_default_type = IF_SCSI,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static QEMUMachine versatileab_machine = {
@@ -376,7 +374,6 @@ static QEMUMachine versatileab_machine = {
     .desc = "ARM Versatile/AB (ARM926EJ-S)",
     .init = vab_init,
     .block_default_type = IF_SCSI,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void versatile_machine_init(void)
@@ -393,7 +390,6 @@ static void vpb_sic_class_init(ObjectClass *klass, void *data)
     SysBusDeviceClass *k = SYS_BUS_DEVICE_CLASS(klass);
 
     k->init = vpb_sic_init;
-    dc->no_user = 1;
     dc->vmsd = &vmstate_vpb_sic;
 }
 

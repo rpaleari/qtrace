@@ -409,7 +409,7 @@ static void disable_interrupt(EEPRO100State * s)
 {
     if (s->int_stat) {
         TRACE(INT, logout("interrupt disabled\n"));
-        qemu_irq_lower(s->dev.irq[0]);
+        pci_irq_deassert(&s->dev);
         s->int_stat = 0;
     }
 }
@@ -418,7 +418,7 @@ static void enable_interrupt(EEPRO100State * s)
 {
     if (!s->int_stat) {
         TRACE(INT, logout("interrupt enabled\n"));
-        qemu_irq_raise(s->dev.irq[0]);
+        pci_irq_assert(&s->dev);
         s->int_stat = 1;
     }
 }
@@ -1217,7 +1217,6 @@ static void eepro100_write_mdi(EEPRO100State *s)
                 break;
             case 1:            /* Status Register */
                 missing("not writable");
-                data = s->mdimem[reg];
                 break;
             case 2:            /* PHY Identification Register (Word 1) */
             case 3:            /* PHY Identification Register (Word 2) */
@@ -1230,7 +1229,8 @@ static void eepro100_write_mdi(EEPRO100State *s)
             default:
                 missing("not implemented");
             }
-            s->mdimem[reg] = data;
+            s->mdimem[reg] &= eepro100_mdi_mask[reg];
+            s->mdimem[reg] |= data & ~eepro100_mdi_mask[reg];
         } else if (opcode == 2) {
             /* MDI read */
             switch (reg) {
@@ -1784,8 +1784,7 @@ static ssize_t nic_receive(NetClientState *nc, const uint8_t * buf, size_t size)
 static const VMStateDescription vmstate_eepro100 = {
     .version_id = 3,
     .minimum_version_id = 2,
-    .minimum_version_id_old = 2,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(dev, EEPRO100State),
         VMSTATE_UNUSED(32),
         VMSTATE_BUFFER(mult, EEPRO100State),

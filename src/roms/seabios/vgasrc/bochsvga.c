@@ -6,15 +6,16 @@
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
-#include "vgabios.h" // struct vbe_modeinfo
-#include "vbe.h" // VBE_CAPABILITY_8BIT_DAC
-#include "bochsvga.h" // bochsvga_set_mode
-#include "util.h" // dprintf
-#include "config.h" // CONFIG_*
 #include "biosvar.h" // GET_GLOBAL
+#include "bochsvga.h" // bochsvga_set_mode
+#include "config.h" // CONFIG_*
+#include "hw/pci.h" // pci_config_readl
+#include "hw/pci_regs.h" // PCI_BASE_ADDRESS_0
+#include "output.h" // dprintf
+#include "std/vbe.h" // VBE_CAPABILITY_8BIT_DAC
 #include "stdvga.h" // VGAREG_SEQU_ADDRESS
-#include "pci.h" // pci_config_readl
-#include "pci_regs.h" // PCI_BASE_ADDRESS_0
+#include "vgabios.h" // struct vbe_modeinfo
+#include "x86.h" // outw
 
 
 /****************************************************************
@@ -68,6 +69,9 @@ static struct bochsvga_mode
     { 0x14a, { MM_DIRECT, 1152, 864,  16, 8, 16, SEG_GRAPH } },
     { 0x14b, { MM_DIRECT, 1152, 864,  24, 8, 16, SEG_GRAPH } },
     { 0x14c, { MM_DIRECT, 1152, 864,  32, 8, 16, SEG_GRAPH } },
+    { 0x175, { MM_DIRECT, 1280, 768,  16, 8, 16, SEG_GRAPH } },
+    { 0x176, { MM_DIRECT, 1280, 768,  24, 8, 16, SEG_GRAPH } },
+    { 0x177, { MM_DIRECT, 1280, 768,  32, 8, 16, SEG_GRAPH } },
     { 0x178, { MM_DIRECT, 1280, 800,  16, 8, 16, SEG_GRAPH } },
     { 0x179, { MM_DIRECT, 1280, 800,  24, 8, 16, SEG_GRAPH } },
     { 0x17a, { MM_DIRECT, 1280, 800,  32, 8, 16, SEG_GRAPH } },
@@ -89,7 +93,15 @@ static struct bochsvga_mode
     { 0x18a, { MM_DIRECT, 2560, 1600, 16, 8, 16, SEG_GRAPH } },
     { 0x18b, { MM_DIRECT, 2560, 1600, 24, 8, 16, SEG_GRAPH } },
     { 0x18c, { MM_DIRECT, 2560, 1600, 32, 8, 16, SEG_GRAPH } },
+    { 0x18d, { MM_DIRECT, 1280, 720,  16, 8, 16, SEG_GRAPH } },
+    { 0x18e, { MM_DIRECT, 1280, 720,  24, 8, 16, SEG_GRAPH } },
+    { 0x18f, { MM_DIRECT, 1280, 720,  32, 8, 16, SEG_GRAPH } },
+    { 0x190, { MM_DIRECT, 1920, 1080, 16, 8, 16, SEG_GRAPH } },
+    { 0x191, { MM_DIRECT, 1920, 1080, 24, 8, 16, SEG_GRAPH } },
+    { 0x192, { MM_DIRECT, 1920, 1080, 32, 8, 16, SEG_GRAPH } },
 };
+
+static int dispi_found VAR16 = 0;
 
 static int is_bochsvga_mode(struct vgamode_s *vmode_g)
 {
@@ -100,9 +112,10 @@ static int is_bochsvga_mode(struct vgamode_s *vmode_g)
 struct vgamode_s *bochsvga_find_mode(int mode)
 {
     struct bochsvga_mode *m = bochsvga_modes;
-    for (; m < &bochsvga_modes[ARRAY_SIZE(bochsvga_modes)]; m++)
-        if (GET_GLOBAL(m->mode) == mode)
-            return &m->info;
+    if (GET_GLOBAL(dispi_found))
+        for (; m < &bochsvga_modes[ARRAY_SIZE(bochsvga_modes)]; m++)
+            if (GET_GLOBAL(m->mode) == mode)
+                return &m->info;
     return stdvga_find_mode(mode);
 }
 
@@ -110,12 +123,14 @@ void
 bochsvga_list_modes(u16 seg, u16 *dest, u16 *last)
 {
     struct bochsvga_mode *m = bochsvga_modes;
-    for (; m < &bochsvga_modes[ARRAY_SIZE(bochsvga_modes)] && dest<last; m++) {
-        u16 mode = GET_GLOBAL(m->mode);
-        if (mode == 0xffff)
-            continue;
-        SET_FARVAR(seg, *dest, mode);
-        dest++;
+    if (GET_GLOBAL(dispi_found)) {
+        for (; m < &bochsvga_modes[ARRAY_SIZE(bochsvga_modes)] && dest<last; m++) {
+            u16 mode = GET_GLOBAL(m->mode);
+            if (mode == 0xffff)
+                continue;
+            SET_FARVAR(seg, *dest, mode);
+            dest++;
+        }
     }
     stdvga_list_modes(seg, dest, last);
 }
@@ -125,9 +140,22 @@ bochsvga_list_modes(u16 seg, u16 *dest, u16 *last)
  * Helper functions
  ****************************************************************/
 
+static inline u16 dispi_read(u16 reg)
+{
+    outw(reg, VBE_DISPI_IOPORT_INDEX);
+    return inw(VBE_DISPI_IOPORT_DATA);
+}
+static inline void dispi_write(u16 reg, u16 val)
+{
+    outw(reg, VBE_DISPI_IOPORT_INDEX);
+    outw(val, VBE_DISPI_IOPORT_DATA);
+}
+
 int
 bochsvga_get_window(struct vgamode_s *vmode_g, int window)
 {
+    if (!GET_GLOBAL(dispi_found))
+        return stdvga_get_window(vmode_g, window);
     if (window != 0)
         return -1;
     return dispi_read(VBE_DISPI_INDEX_BANK);
@@ -136,6 +164,8 @@ bochsvga_get_window(struct vgamode_s *vmode_g, int window)
 int
 bochsvga_set_window(struct vgamode_s *vmode_g, int window, int val)
 {
+    if (!GET_GLOBAL(dispi_found))
+        return stdvga_set_window(vmode_g, window, val);
     if (window != 0)
         return -1;
     dispi_write(VBE_DISPI_INDEX_BANK, val);
@@ -147,6 +177,8 @@ bochsvga_set_window(struct vgamode_s *vmode_g, int window, int val)
 int
 bochsvga_get_linelength(struct vgamode_s *vmode_g)
 {
+    if (!GET_GLOBAL(dispi_found))
+        return stdvga_get_linelength(vmode_g);
     return dispi_read(VBE_DISPI_INDEX_VIRT_WIDTH) * vga_bpp(vmode_g) / 8;
 }
 
@@ -154,14 +186,18 @@ int
 bochsvga_set_linelength(struct vgamode_s *vmode_g, int val)
 {
     stdvga_set_linelength(vmode_g, val);
-    int pixels = (val * 8) / vga_bpp(vmode_g);
-    dispi_write(VBE_DISPI_INDEX_VIRT_WIDTH, pixels);
+    if (GET_GLOBAL(dispi_found)) {
+        int pixels = (val * 8) / vga_bpp(vmode_g);
+        dispi_write(VBE_DISPI_INDEX_VIRT_WIDTH, pixels);
+    }
     return 0;
 }
 
 int
 bochsvga_get_displaystart(struct vgamode_s *vmode_g)
 {
+    if (!GET_GLOBAL(dispi_found))
+        return stdvga_get_displaystart(vmode_g);
     int bpp = vga_bpp(vmode_g);
     int linelength = dispi_read(VBE_DISPI_INDEX_VIRT_WIDTH) * bpp / 8;
     int x = dispi_read(VBE_DISPI_INDEX_X_OFFSET);
@@ -173,16 +209,22 @@ int
 bochsvga_set_displaystart(struct vgamode_s *vmode_g, int val)
 {
     stdvga_set_displaystart(vmode_g, val);
-    int bpp = vga_bpp(vmode_g);
-    int linelength = dispi_read(VBE_DISPI_INDEX_VIRT_WIDTH) * bpp / 8;
-    dispi_write(VBE_DISPI_INDEX_X_OFFSET, (val % linelength) * 8 / bpp);
-    dispi_write(VBE_DISPI_INDEX_Y_OFFSET, val / linelength);
+    if (GET_GLOBAL(dispi_found)) {
+        int bpp = vga_bpp(vmode_g);
+        int linelength = dispi_read(VBE_DISPI_INDEX_VIRT_WIDTH) * bpp / 8;
+        if (!linelength)
+            return 0;
+        dispi_write(VBE_DISPI_INDEX_X_OFFSET, (val % linelength) * 8 / bpp);
+        dispi_write(VBE_DISPI_INDEX_Y_OFFSET, val / linelength);
+    }
     return 0;
 }
 
 int
 bochsvga_get_dacformat(struct vgamode_s *vmode_g)
 {
+    if (!GET_GLOBAL(dispi_found))
+        return stdvga_get_dacformat(vmode_g);
     u16 en = dispi_read(VBE_DISPI_INDEX_ENABLE);
     return (en & VBE_DISPI_8BIT_DAC) ? 8 : 6;
 }
@@ -190,6 +232,8 @@ bochsvga_get_dacformat(struct vgamode_s *vmode_g)
 int
 bochsvga_set_dacformat(struct vgamode_s *vmode_g, int val)
 {
+    if (!GET_GLOBAL(dispi_found))
+        return stdvga_set_dacformat(vmode_g, val);
     u16 en = dispi_read(VBE_DISPI_INDEX_ENABLE);
     if (val == 6)
         en &= ~VBE_DISPI_8BIT_DAC;
@@ -201,28 +245,9 @@ bochsvga_set_dacformat(struct vgamode_s *vmode_g, int val)
     return 0;
 }
 
-int
-bochsvga_size_state(int states)
+static int
+bochsvga_save_state(u16 seg, u16 *info)
 {
-    int size = stdvga_size_state(states);
-    if (size < 0)
-        return size;
-    if (states & 8)
-        size += (VBE_DISPI_INDEX_Y_OFFSET-VBE_DISPI_INDEX_XRES+1)*sizeof(u16);
-    return size;
-}
-
-int
-bochsvga_save_state(u16 seg, void *data, int states)
-{
-    int ret = stdvga_save_state(seg, data, states);
-    if (ret < 0)
-        return ret;
-
-    if (!(states & 8))
-        return 0;
-
-    u16 *info = (data + stdvga_size_state(states));
     u16 en = dispi_read(VBE_DISPI_INDEX_ENABLE);
     SET_FARVAR(seg, *info, en);
     info++;
@@ -238,17 +263,9 @@ bochsvga_save_state(u16 seg, void *data, int states)
     return 0;
 }
 
-int
-bochsvga_restore_state(u16 seg, void *data, int states)
+static int
+bochsvga_restore_state(u16 seg, u16 *info)
 {
-    int ret = stdvga_restore_state(seg, data, states);
-    if (ret < 0)
-        return ret;
-
-    if (!(states & 8))
-        return 0;
-
-    u16 *info = (data + stdvga_size_state(states));
     u16 en = GET_FARVAR(seg, *info);
     info++;
     if (!(en & VBE_DISPI_ENABLED)) {
@@ -266,6 +283,21 @@ bochsvga_restore_state(u16 seg, void *data, int states)
     return 0;
 }
 
+int
+bochsvga_save_restore(int cmd, u16 seg, void *data)
+{
+    int ret = stdvga_save_restore(cmd, seg, data);
+    if (ret < 0 || !(cmd & SR_REGISTERS) || !GET_GLOBAL(dispi_found))
+        return ret;
+
+    u16 *info = (data + ret);
+    if (cmd & SR_SAVE)
+        bochsvga_save_state(seg, info);
+    if (cmd & SR_RESTORE)
+        bochsvga_restore_state(seg, info);
+    return ret + (VBE_DISPI_INDEX_Y_OFFSET-VBE_DISPI_INDEX_XRES+1)*sizeof(u16);
+}
+
 
 /****************************************************************
  * Mode setting
@@ -274,18 +306,20 @@ bochsvga_restore_state(u16 seg, void *data, int states)
 int
 bochsvga_set_mode(struct vgamode_s *vmode_g, int flags)
 {
-    dispi_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
+    if (GET_GLOBAL(dispi_found))
+        dispi_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
     if (! is_bochsvga_mode(vmode_g))
         return stdvga_set_mode(vmode_g, flags);
+    if (!GET_GLOBAL(dispi_found))
+        return -1;
 
-    u8 depth = GET_GLOBAL(vmode_g->depth);
-    if (depth == 4)
+    u8 memmodel = GET_GLOBAL(vmode_g->memmodel);
+    if (memmodel == MM_PLANAR)
         stdvga_set_mode(stdvga_find_mode(0x6a), 0);
-    if (depth == 8)
-        // XXX load_dac_palette(3);
-        ;
+    if (memmodel == MM_PACKED && !(flags & MF_NOPALETTE))
+        stdvga_set_packed_palette();
 
-    dispi_write(VBE_DISPI_INDEX_BPP, depth);
+    dispi_write(VBE_DISPI_INDEX_BPP, GET_GLOBAL(vmode_g->depth));
     u16 width = GET_GLOBAL(vmode_g->width);
     u16 height = GET_GLOBAL(vmode_g->height);
     dispi_write(VBE_DISPI_INDEX_XRES, width);
@@ -313,12 +347,13 @@ bochsvga_set_mode(struct vgamode_s *vmode_g, int flags)
     stdvga_attr_mask(0x10, 0x00, 0x01);
     stdvga_grdc_write(0x06, 0x05);
     stdvga_sequ_write(0x02, 0x0f);
-    if (depth >= 8) {
+    if (memmodel != MM_PLANAR) {
         stdvga_crtc_mask(crtc_addr, 0x14, 0x00, 0x40);
         stdvga_attr_mask(0x10, 0x00, 0x40);
         stdvga_sequ_mask(0x04, 0x00, 0x08);
         stdvga_grdc_mask(0x05, 0x20, 0x40);
     }
+    stdvga_attrindex_write(0x20);
 
     return 0;
 }
@@ -329,20 +364,21 @@ bochsvga_set_mode(struct vgamode_s *vmode_g, int flags)
  ****************************************************************/
 
 int
-bochsvga_init(void)
+bochsvga_setup(void)
 {
-    int ret = stdvga_init();
+    int ret = stdvga_setup();
     if (ret)
         return ret;
 
     /* Sanity checks */
     dispi_write(VBE_DISPI_INDEX_ID, VBE_DISPI_ID0);
     if (dispi_read(VBE_DISPI_INDEX_ID) != VBE_DISPI_ID0) {
-        dprintf(1, "No VBE DISPI interface detected\n");
-        return -1;
+        dprintf(1, "No VBE DISPI interface detected, falling back to stdvga\n");
+        return 0;
     }
 
     dispi_write(VBE_DISPI_INDEX_ID, VBE_DISPI_ID5);
+    SET_VGA(dispi_found, 1);
 
     if (GET_GLOBAL(HaveRunInit))
         return 0;
@@ -350,12 +386,20 @@ bochsvga_init(void)
     u32 lfb_addr = VBE_DISPI_LFB_PHYSICAL_ADDRESS;
     int bdf = GET_GLOBAL(VgaBDF);
     if (CONFIG_VGA_PCI && bdf >= 0) {
-        int barid = 0;
-        u32 bar = pci_config_readl(bdf, PCI_BASE_ADDRESS_0);
-        if ((bar & PCI_BASE_ADDRESS_SPACE) != PCI_BASE_ADDRESS_SPACE_MEMORY) {
+        u16 vendor = pci_config_readw(bdf, PCI_VENDOR_ID);
+        int barid;
+        switch (vendor) {
+        case 0x15ad: /* qemu vmware vga */
             barid = 1;
-            bar = pci_config_readl(bdf, PCI_BASE_ADDRESS_1);
+            break;
+        case 0x1af4: /* virtio-vga */
+            barid = 2;
+            break;
+        default: /* stdvga, qxl */
+            barid = 0;
+            break;
         }
+        u32 bar = pci_config_readl(bdf, PCI_BASE_ADDRESS_0 + barid * 4);
         lfb_addr = bar & PCI_BASE_ADDRESS_MEM_MASK;
         dprintf(1, "VBE DISPI: bdf %02x:%02x.%x, bar %d\n", pci_bdf_to_bus(bdf)
                 , pci_bdf_to_dev(bdf), pci_bdf_to_fn(bdf), barid);
@@ -382,7 +426,7 @@ bochsvga_init(void)
         u16 height = GET_GLOBAL(m->info.height);
         u8 depth = GET_GLOBAL(m->info.depth);
         u32 mem = (height * DIV_ROUND_UP(width * vga_bpp(&m->info), 8)
-                   * 4 / stdvga_bpp_factor(&m->info));
+                   * stdvga_vram_ratio(&m->info));
 
         if (width > max_xres || depth > max_bpp || mem > totalmem) {
             dprintf(1, "Removing mode %x\n", GET_GLOBAL(m->mode));

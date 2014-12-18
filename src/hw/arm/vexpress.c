@@ -28,10 +28,12 @@
 #include "net/net.h"
 #include "sysemu/sysemu.h"
 #include "hw/boards.h"
+#include "hw/loader.h"
 #include "exec/address-spaces.h"
 #include "sysemu/blockdev.h"
 #include "hw/block/flash.h"
 #include "sysemu/device_tree.h"
+#include "qemu/error-report.h"
 #include <libfdt.h>
 
 #define VEXPRESS_BOARD_ID 0x8e0
@@ -82,6 +84,7 @@ enum {
 };
 
 static hwaddr motherboard_legacy_map[] = {
+    [VE_NORFLASHALIAS] = 0,
     /* CS7: 0x10000000 .. 0x10020000 */
     [VE_SYSREGS] = 0x10000000,
     [VE_SP810] = 0x10001000,
@@ -112,7 +115,6 @@ static hwaddr motherboard_legacy_map[] = {
     [VE_VIDEORAM] = 0x4c000000,
     [VE_ETHERNET] = 0x4e000000,
     [VE_USB] = 0x4f000000,
-    [VE_NORFLASHALIAS] = -1, /* not present */
 };
 
 static hwaddr motherboard_aseries_map[] = {
@@ -173,6 +175,63 @@ struct VEDBoardInfo {
     DBoardInitFn *init;
 };
 
+static void init_cpus(const char *cpu_model, const char *privdev,
+                      hwaddr periphbase, qemu_irq *pic)
+{
+    ObjectClass *cpu_oc = cpu_class_by_name(TYPE_ARM_CPU, cpu_model);
+    DeviceState *dev;
+    SysBusDevice *busdev;
+    int n;
+
+    if (!cpu_oc) {
+        fprintf(stderr, "Unable to find CPU definition\n");
+        exit(1);
+    }
+
+    /* Create the actual CPUs */
+    for (n = 0; n < smp_cpus; n++) {
+        Object *cpuobj = object_new(object_class_get_name(cpu_oc));
+        Error *err = NULL;
+
+        if (object_property_find(cpuobj, "reset-cbar", NULL)) {
+            object_property_set_int(cpuobj, periphbase,
+                                    "reset-cbar", &error_abort);
+        }
+        object_property_set_bool(cpuobj, true, "realized", &err);
+        if (err) {
+            error_report("%s", error_get_pretty(err));
+            exit(1);
+        }
+    }
+
+    /* Create the private peripheral devices (including the GIC);
+     * this must happen after the CPUs are created because a15mpcore_priv
+     * wires itself up to the CPU's generic_timer gpio out lines.
+     */
+    dev = qdev_create(NULL, privdev);
+    qdev_prop_set_uint32(dev, "num-cpu", smp_cpus);
+    qdev_init_nofail(dev);
+    busdev = SYS_BUS_DEVICE(dev);
+    sysbus_mmio_map(busdev, 0, periphbase);
+
+    /* Interrupts [42:0] are from the motherboard;
+     * [47:43] are reserved; [63:48] are daughterboard
+     * peripherals. Note that some documentation numbers
+     * external interrupts starting from 32 (because there
+     * are internal interrupts 0..31).
+     */
+    for (n = 0; n < 64; n++) {
+        pic[n] = qdev_get_gpio_in(dev, n);
+    }
+
+    /* Connect the CPUs to the GIC */
+    for (n = 0; n < smp_cpus; n++) {
+        DeviceState *cpudev = DEVICE(qemu_get_cpu(n));
+
+        sysbus_connect_irq(busdev, n, qdev_get_gpio_in(cpudev, ARM_CPU_IRQ));
+    }
+}
+
 static void a9_daughterboard_init(const VEDBoardInfo *daughterboard,
                                   ram_addr_t ram_size,
                                   const char *cpu_model,
@@ -181,25 +240,10 @@ static void a9_daughterboard_init(const VEDBoardInfo *daughterboard,
     MemoryRegion *sysmem = get_system_memory();
     MemoryRegion *ram = g_new(MemoryRegion, 1);
     MemoryRegion *lowram = g_new(MemoryRegion, 1);
-    DeviceState *dev;
-    SysBusDevice *busdev;
-    qemu_irq *irqp;
-    int n;
-    qemu_irq cpu_irq[4];
     ram_addr_t low_ram_size;
 
     if (!cpu_model) {
         cpu_model = "cortex-a9";
-    }
-
-    for (n = 0; n < smp_cpus; n++) {
-        ARMCPU *cpu = cpu_arm_init(cpu_model);
-        if (!cpu) {
-            fprintf(stderr, "Unable to find CPU definition\n");
-            exit(1);
-        }
-        irqp = arm_pic_init_cpu(cpu);
-        cpu_irq[n] = irqp[ARM_PIC_CPU_IRQ];
     }
 
     if (ram_size > 0x40000000) {
@@ -223,23 +267,7 @@ static void a9_daughterboard_init(const VEDBoardInfo *daughterboard,
     memory_region_add_subregion(sysmem, 0x60000000, ram);
 
     /* 0x1e000000 A9MPCore (SCU) private memory region */
-    dev = qdev_create(NULL, "a9mpcore_priv");
-    qdev_prop_set_uint32(dev, "num-cpu", smp_cpus);
-    qdev_init_nofail(dev);
-    busdev = SYS_BUS_DEVICE(dev);
-    sysbus_mmio_map(busdev, 0, 0x1e000000);
-    for (n = 0; n < smp_cpus; n++) {
-        sysbus_connect_irq(busdev, n, cpu_irq[n]);
-    }
-    /* Interrupts [42:0] are from the motherboard;
-     * [47:43] are reserved; [63:48] are daughterboard
-     * peripherals. Note that some documentation numbers
-     * external interrupts starting from 32 (because the
-     * A9MP has internal interrupts 0..31).
-     */
-    for (n = 0; n < 64; n++) {
-        pic[n] = qdev_get_gpio_in(dev, n);
-    }
+    init_cpus(cpu_model, "a9mpcore_priv", 0x1e000000, pic);
 
     /* Daughterboard peripherals : 0x10020000 .. 0x20000000 */
 
@@ -298,29 +326,12 @@ static void a15_daughterboard_init(const VEDBoardInfo *daughterboard,
                                    const char *cpu_model,
                                    qemu_irq *pic)
 {
-    int n;
     MemoryRegion *sysmem = get_system_memory();
     MemoryRegion *ram = g_new(MemoryRegion, 1);
     MemoryRegion *sram = g_new(MemoryRegion, 1);
-    qemu_irq cpu_irq[4];
-    DeviceState *dev;
-    SysBusDevice *busdev;
 
     if (!cpu_model) {
         cpu_model = "cortex-a15";
-    }
-
-    for (n = 0; n < smp_cpus; n++) {
-        ARMCPU *cpu;
-        qemu_irq *irqp;
-
-        cpu = cpu_arm_init(cpu_model);
-        if (!cpu) {
-            fprintf(stderr, "Unable to find CPU definition\n");
-            exit(1);
-        }
-        irqp = arm_pic_init_cpu(cpu);
-        cpu_irq[n] = irqp[ARM_PIC_CPU_IRQ];
     }
 
     {
@@ -341,23 +352,7 @@ static void a15_daughterboard_init(const VEDBoardInfo *daughterboard,
     memory_region_add_subregion(sysmem, 0x80000000, ram);
 
     /* 0x2c000000 A15MPCore private memory region (GIC) */
-    dev = qdev_create(NULL, "a15mpcore_priv");
-    qdev_prop_set_uint32(dev, "num-cpu", smp_cpus);
-    qdev_init_nofail(dev);
-    busdev = SYS_BUS_DEVICE(dev);
-    sysbus_mmio_map(busdev, 0, 0x2c000000);
-    for (n = 0; n < smp_cpus; n++) {
-        sysbus_connect_irq(busdev, n, cpu_irq[n]);
-    }
-    /* Interrupts [42:0] are from the motherboard;
-     * [47:43] are reserved; [63:48] are daughterboard
-     * peripherals. Note that some documentation numbers
-     * external interrupts starting from 32 (because there
-     * are internal interrupts 0..31).
-     */
-    for (n = 0; n < 64; n++) {
-        pic[n] = qdev_get_gpio_in(dev, n);
-    }
+    init_cpus(cpu_model, "a15mpcore_priv", 0x2c000000, pic);
 
     /* A15 daughterboard peripherals: */
 
@@ -423,13 +418,13 @@ static int add_virtio_mmio_node(void *fdt, uint32_t acells, uint32_t scells,
     int rc;
     char *nodename = g_strdup_printf("/virtio_mmio@%" PRIx64, addr);
 
-    rc = qemu_devtree_add_subnode(fdt, nodename);
-    rc |= qemu_devtree_setprop_string(fdt, nodename,
-                                      "compatible", "virtio,mmio");
-    rc |= qemu_devtree_setprop_sized_cells(fdt, nodename, "reg",
-                                           acells, addr, scells, size);
-    qemu_devtree_setprop_cells(fdt, nodename, "interrupt-parent", intc);
-    qemu_devtree_setprop_cells(fdt, nodename, "interrupts", 0, irq, 1);
+    rc = qemu_fdt_add_subnode(fdt, nodename);
+    rc |= qemu_fdt_setprop_string(fdt, nodename,
+                                  "compatible", "virtio,mmio");
+    rc |= qemu_fdt_setprop_sized_cells(fdt, nodename, "reg",
+                                       acells, addr, scells, size);
+    qemu_fdt_setprop_cells(fdt, nodename, "interrupt-parent", intc);
+    qemu_fdt_setprop_cells(fdt, nodename, "interrupts", 0, irq, 1);
     g_free(nodename);
     if (rc) {
         return -1;
@@ -460,8 +455,8 @@ static void vexpress_modify_dtb(const struct arm_boot_info *info, void *fdt)
     uint32_t acells, scells, intc;
     const VEDBoardInfo *daughterboard = (const VEDBoardInfo *)info;
 
-    acells = qemu_devtree_getprop_cell(fdt, "/", "#address-cells");
-    scells = qemu_devtree_getprop_cell(fdt, "/", "#size-cells");
+    acells = qemu_fdt_getprop_cell(fdt, "/", "#address-cells");
+    scells = qemu_fdt_getprop_cell(fdt, "/", "#size-cells");
     intc = find_int_controller(fdt);
     if (!intc) {
         /* Not fatal, we just won't provide virtio. This will
@@ -484,8 +479,38 @@ static void vexpress_modify_dtb(const struct arm_boot_info *info, void *fdt)
     }
 }
 
+
+/* Open code a private version of pflash registration since we
+ * need to set non-default device width for VExpress platform.
+ */
+static pflash_t *ve_pflash_cfi01_register(hwaddr base, const char *name,
+                                          DriveInfo *di)
+{
+    DeviceState *dev = qdev_create(NULL, "cfi.pflash01");
+
+    if (di && qdev_prop_set_drive(dev, "drive", di->bdrv)) {
+        abort();
+    }
+
+    qdev_prop_set_uint32(dev, "num-blocks",
+                         VEXPRESS_FLASH_SIZE / VEXPRESS_FLASH_SECT_SIZE);
+    qdev_prop_set_uint64(dev, "sector-length", VEXPRESS_FLASH_SECT_SIZE);
+    qdev_prop_set_uint8(dev, "width", 4);
+    qdev_prop_set_uint8(dev, "device-width", 2);
+    qdev_prop_set_uint8(dev, "big-endian", 0);
+    qdev_prop_set_uint16(dev, "id0", 0x89);
+    qdev_prop_set_uint16(dev, "id1", 0x18);
+    qdev_prop_set_uint16(dev, "id2", 0x00);
+    qdev_prop_set_uint16(dev, "id3", 0x00);
+    qdev_prop_set_string(dev, "name", name);
+    qdev_init_nofail(dev);
+
+    sysbus_mmio_map(SYS_BUS_DEVICE(dev), 0, base);
+    return OBJECT_CHECK(pflash_t, (dev), "cfi.pflash01");
+}
+
 static void vexpress_common_init(VEDBoardInfo *daughterboard,
-                                 QEMUMachineInitArgs *args)
+                                 MachineState *machine)
 {
     DeviceState *dev, *sysctl, *pl041;
     qemu_irq pic[64];
@@ -501,7 +526,28 @@ static void vexpress_common_init(VEDBoardInfo *daughterboard,
     const hwaddr *map = daughterboard->motherboard_map;
     int i;
 
-    daughterboard->init(daughterboard, args->ram_size, args->cpu_model, pic);
+    daughterboard->init(daughterboard, machine->ram_size, machine->cpu_model,
+                        pic);
+
+    /*
+     * If a bios file was provided, attempt to map it into memory
+     */
+    if (bios_name) {
+        const char *fn;
+
+        if (drive_get(IF_PFLASH, 0, 0)) {
+            error_report("The contents of the first flash device may be "
+                         "specified with -bios or with -drive if=pflash... "
+                         "but you cannot use both options at once");
+            exit(1);
+        }
+        fn = qemu_find_file(QEMU_FILE_TYPE_BIOS, bios_name);
+        if (!fn || load_image_targphys(fn, map[VE_NORFLASH0],
+                                       VEXPRESS_FLASH_SIZE) < 0) {
+            error_report("Could not load ROM image '%s'", bios_name);
+            exit(1);
+        }
+    }
 
     /* Motherboard peripherals: the wiring is the same but the
      * addresses vary between the legacy and A-Series memory maps.
@@ -565,11 +611,8 @@ static void vexpress_common_init(VEDBoardInfo *daughterboard,
     sysbus_create_simple("pl111", map[VE_CLCD], pic[14]);
 
     dinfo = drive_get_next(IF_PFLASH);
-    pflash0 = pflash_cfi01_register(map[VE_NORFLASH0], NULL, "vexpress.flash0",
-            VEXPRESS_FLASH_SIZE, dinfo ? dinfo->bdrv : NULL,
-            VEXPRESS_FLASH_SECT_SIZE,
-            VEXPRESS_FLASH_SIZE / VEXPRESS_FLASH_SECT_SIZE, 4,
-            0x00, 0x89, 0x00, 0x18, 0);
+    pflash0 = ve_pflash_cfi01_register(map[VE_NORFLASH0], "vexpress.flash0",
+                                       dinfo);
     if (!pflash0) {
         fprintf(stderr, "vexpress: error registering flash 0.\n");
         exit(1);
@@ -584,11 +627,8 @@ static void vexpress_common_init(VEDBoardInfo *daughterboard,
     }
 
     dinfo = drive_get_next(IF_PFLASH);
-    if (!pflash_cfi01_register(map[VE_NORFLASH1], NULL, "vexpress.flash1",
-            VEXPRESS_FLASH_SIZE, dinfo ? dinfo->bdrv : NULL,
-            VEXPRESS_FLASH_SECT_SIZE,
-            VEXPRESS_FLASH_SIZE / VEXPRESS_FLASH_SECT_SIZE, 4,
-            0x00, 0x89, 0x00, 0x18, 0)) {
+    if (!ve_pflash_cfi01_register(map[VE_NORFLASH1], "vexpress.flash1",
+                                  dinfo)) {
         fprintf(stderr, "vexpress: error registering flash 1.\n");
         exit(1);
     }
@@ -621,10 +661,10 @@ static void vexpress_common_init(VEDBoardInfo *daughterboard,
                              pic[40 + i]);
     }
 
-    daughterboard->bootinfo.ram_size = args->ram_size;
-    daughterboard->bootinfo.kernel_filename = args->kernel_filename;
-    daughterboard->bootinfo.kernel_cmdline = args->kernel_cmdline;
-    daughterboard->bootinfo.initrd_filename = args->initrd_filename;
+    daughterboard->bootinfo.ram_size = machine->ram_size;
+    daughterboard->bootinfo.kernel_filename = machine->kernel_filename;
+    daughterboard->bootinfo.kernel_cmdline = machine->kernel_cmdline;
+    daughterboard->bootinfo.initrd_filename = machine->initrd_filename;
     daughterboard->bootinfo.nb_cpus = smp_cpus;
     daughterboard->bootinfo.board_id = VEXPRESS_BOARD_ID;
     daughterboard->bootinfo.loader_start = daughterboard->loader_start;
@@ -635,14 +675,14 @@ static void vexpress_common_init(VEDBoardInfo *daughterboard,
     arm_load_kernel(ARM_CPU(first_cpu), &daughterboard->bootinfo);
 }
 
-static void vexpress_a9_init(QEMUMachineInitArgs *args)
+static void vexpress_a9_init(MachineState *machine)
 {
-    vexpress_common_init(&a9_daughterboard, args);
+    vexpress_common_init(&a9_daughterboard, machine);
 }
 
-static void vexpress_a15_init(QEMUMachineInitArgs *args)
+static void vexpress_a15_init(MachineState *machine)
 {
-    vexpress_common_init(&a15_daughterboard, args);
+    vexpress_common_init(&a15_daughterboard, machine);
 }
 
 static QEMUMachine vexpress_a9_machine = {
@@ -651,7 +691,6 @@ static QEMUMachine vexpress_a9_machine = {
     .init = vexpress_a9_init,
     .block_default_type = IF_SCSI,
     .max_cpus = 4,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static QEMUMachine vexpress_a15_machine = {
@@ -660,7 +699,6 @@ static QEMUMachine vexpress_a15_machine = {
     .init = vexpress_a15_init,
     .block_default_type = IF_SCSI,
     .max_cpus = 4,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void vexpress_machine_init(void)

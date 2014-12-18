@@ -174,7 +174,8 @@
         0200  OF s" ssa"           ENDOF
         0300  OF s" usb-uhci"      ENDOF
         0310  OF s" usb-ohci"      ENDOF
-        0320  OF s" usb-ehci"      ENDOF
+	0320  OF s" usb-ehci"      ENDOF
+        0330  OF s" usb-xhci"      ENDOF
         0380  OF s" usb"           ENDOF
         03FE  OF s" usb-device"    ENDOF
         0400  OF s" fibre-channel" ENDOF

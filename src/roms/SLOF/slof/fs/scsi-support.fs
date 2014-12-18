@@ -174,7 +174,7 @@ CONSTANT scsi-length-sense-data
 : scsi-get-sense-data?                 ( addr -- false | ascq asc sense-key true )
    dup
    sense-data>response-code c@
-   7e AND 70 =          \ Response code (some devices have MSB set)
+   7e AND dup 70 = swap 72 = or         \ Response code (some devices have MSB set)
    IF
       scsi-get-sense-data TRUE
    ELSE
@@ -777,6 +777,12 @@ CONSTANT scsi-length-media-event
    h# 0   to scsi-param-control        \ common CDB control byte
    d# 0   to scsi-param-errors         \ local errors (param limits)
 ;
+
+\ ***************************************************************************
+\ Constants used by SCSI controller's execute-scsi-command
+\ ***************************************************************************
+true  CONSTANT scsi-dir-read
+false CONSTANT scsi-dir-write
 
 
 \ ***************************************************************************

@@ -42,7 +42,6 @@
 
 #define HPET_MSI_SUPPORT        0
 
-#define TYPE_HPET "hpet"
 #define HPET(obj) OBJECT_CHECK(HPETState, (obj), TYPE_HPET)
 
 struct HPETState;
@@ -73,6 +72,7 @@ typedef struct HPETState {
     uint8_t rtc_irq_level;
     qemu_irq pit_enabled;
     uint8_t num_timers;
+    uint32_t intcap;
     HPETTimer timer[HPET_MAX_TIMERS];
 
     /* Memory-mapped, software visible registers */
@@ -152,7 +152,7 @@ static int deactivating_bit(uint64_t old, uint64_t new, uint64_t mask)
 
 static uint64_t hpet_get_ticks(HPETState *s)
 {
-    return ns_to_ticks(qemu_get_clock_ns(vm_clock) + s->hpet_offset);
+    return ns_to_ticks(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->hpet_offset);
 }
 
 /*
@@ -198,13 +198,24 @@ static void update_irq(struct HPETTimer *timer, int set)
     if (!set || !timer_enabled(timer) || !hpet_enabled(timer->state)) {
         s->isr &= ~mask;
         if (!timer_fsb_route(timer)) {
-            qemu_irq_lower(s->irqs[route]);
+            /* fold the ICH PIRQ# pin's internal inversion logic into hpet */
+            if (route >= ISA_NUM_IRQS) {
+                qemu_irq_raise(s->irqs[route]);
+            } else {
+                qemu_irq_lower(s->irqs[route]);
+            }
         }
     } else if (timer_fsb_route(timer)) {
-        stl_le_phys(timer->fsb >> 32, timer->fsb & 0xffffffff);
+        stl_le_phys(&address_space_memory,
+                    timer->fsb >> 32, timer->fsb & 0xffffffff);
     } else if (timer->config & HPET_TN_TYPE_LEVEL) {
         s->isr |= mask;
-        qemu_irq_raise(s->irqs[route]);
+        /* fold the ICH PIRQ# pin's internal inversion logic into hpet */
+        if (route >= ISA_NUM_IRQS) {
+            qemu_irq_lower(s->irqs[route]);
+        } else {
+            qemu_irq_raise(s->irqs[route]);
+        }
     } else {
         s->isr &= ~mask;
         qemu_irq_pulse(s->irqs[route]);
@@ -228,12 +239,24 @@ static int hpet_pre_load(void *opaque)
     return 0;
 }
 
+static bool hpet_validate_num_timers(void *opaque, int version_id)
+{
+    HPETState *s = opaque;
+
+    if (s->num_timers < HPET_MIN_TIMERS) {
+        return false;
+    } else if (s->num_timers > HPET_MAX_TIMERS) {
+        return false;
+    }
+    return true;
+}
+
 static int hpet_post_load(void *opaque, int version_id)
 {
     HPETState *s = opaque;
 
     /* Recalculate the offset between the main counter and guest time */
-    s->hpet_offset = ticks_to_ns(s->hpet_counter) - qemu_get_clock_ns(vm_clock);
+    s->hpet_offset = ticks_to_ns(s->hpet_counter) - qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
 
     /* Push number of timers into capability returned via HPET_ID */
     s->capability &= ~HPET_ID_NUM_TIM_MASK;
@@ -259,8 +282,7 @@ static const VMStateDescription vmstate_hpet_rtc_irq_level = {
     .name = "hpet/rtc_irq_level",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8(rtc_irq_level, HPETState),
         VMSTATE_END_OF_LIST()
     }
@@ -270,8 +292,7 @@ static const VMStateDescription vmstate_hpet_timer = {
     .name = "hpet_timer",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8(tn, HPETTimer),
         VMSTATE_UINT64(config, HPETTimer),
         VMSTATE_UINT64(cmp, HPETTimer),
@@ -287,15 +308,15 @@ static const VMStateDescription vmstate_hpet = {
     .name = "hpet",
     .version_id = 2,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .pre_save = hpet_pre_save,
     .pre_load = hpet_pre_load,
     .post_load = hpet_post_load,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT64(config, HPETState),
         VMSTATE_UINT64(isr, HPETState),
         VMSTATE_UINT64(hpet_counter, HPETState),
         VMSTATE_UINT8_V(num_timers, HPETState, 2),
+        VMSTATE_VALIDATE("num_timers in range", hpet_validate_num_timers),
         VMSTATE_STRUCT_VARRAY_UINT8(timer, HPETState, num_timers, 0,
                                     vmstate_hpet_timer, HPETTimer),
         VMSTATE_END_OF_LIST()
@@ -332,12 +353,12 @@ static void hpet_timer(void *opaque)
             }
         }
         diff = hpet_calculate_diff(t, cur_tick);
-        qemu_mod_timer(t->qemu_timer,
-                       qemu_get_clock_ns(vm_clock) + (int64_t)ticks_to_ns(diff));
+        timer_mod(t->qemu_timer,
+                       qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + (int64_t)ticks_to_ns(diff));
     } else if (t->config & HPET_TN_32BIT && !timer_is_periodic(t)) {
         if (t->wrap_flag) {
             diff = hpet_calculate_diff(t, cur_tick);
-            qemu_mod_timer(t->qemu_timer, qemu_get_clock_ns(vm_clock) +
+            timer_mod(t->qemu_timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) +
                            (int64_t)ticks_to_ns(diff));
             t->wrap_flag = 0;
         }
@@ -365,13 +386,13 @@ static void hpet_set_timer(HPETTimer *t)
             t->wrap_flag = 1;
         }
     }
-    qemu_mod_timer(t->qemu_timer,
-                   qemu_get_clock_ns(vm_clock) + (int64_t)ticks_to_ns(diff));
+    timer_mod(t->qemu_timer,
+                   qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + (int64_t)ticks_to_ns(diff));
 }
 
 static void hpet_del_timer(HPETTimer *t)
 {
-    qemu_del_timer(t->qemu_timer);
+    timer_del(t->qemu_timer);
     update_irq(t, 0);
 }
 
@@ -495,7 +516,8 @@ static void hpet_ram_write(void *opaque, hwaddr addr,
                 timer->cmp = (uint32_t)timer->cmp;
                 timer->period = (uint32_t)timer->period;
             }
-            if (activating_bit(old_val, new_val, HPET_TN_ENABLE)) {
+            if (activating_bit(old_val, new_val, HPET_TN_ENABLE) &&
+                hpet_enabled(s)) {
                 hpet_set_timer(timer);
             } else if (deactivating_bit(old_val, new_val, HPET_TN_ENABLE)) {
                 hpet_del_timer(timer);
@@ -567,7 +589,7 @@ static void hpet_ram_write(void *opaque, hwaddr addr,
             if (activating_bit(old_val, new_val, HPET_CFG_ENABLE)) {
                 /* Enable main counter and interrupt generation. */
                 s->hpet_offset =
-                    ticks_to_ns(s->hpet_counter) - qemu_get_clock_ns(vm_clock);
+                    ticks_to_ns(s->hpet_counter) - qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
                 for (i = 0; i < s->num_timers; i++) {
                     if ((&s->timer[i])->cmp != ~0ULL) {
                         hpet_set_timer(&s->timer[i]);
@@ -653,8 +675,8 @@ static void hpet_reset(DeviceState *d)
         if (s->flags & (1 << HPET_MSI_SUPPORT)) {
             timer->config |= HPET_TN_FSB_CAP;
         }
-        /* advertise availability of ioapic inti2 */
-        timer->config |=  0x00000004ULL << 32;
+        /* advertise availability of ioapic int */
+        timer->config |=  (uint64_t)s->intcap << 32;
         timer->period = 0ULL;
         timer->wrap_flag = 0;
     }
@@ -703,6 +725,9 @@ static void hpet_realize(DeviceState *dev, Error **errp)
     int i;
     HPETTimer *timer;
 
+    if (!s->intcap) {
+        error_printf("Hpet's intcap not initialized.\n");
+    }
     if (hpet_cfg.count == UINT8_MAX) {
         /* first instance */
         hpet_cfg.count = 0;
@@ -726,7 +751,7 @@ static void hpet_realize(DeviceState *dev, Error **errp)
     }
     for (i = 0; i < HPET_MAX_TIMERS; i++) {
         timer = &s->timer[i];
-        timer->qemu_timer = qemu_new_timer_ns(vm_clock, hpet_timer, timer);
+        timer->qemu_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, hpet_timer, timer);
         timer->tn = i;
         timer->state = s;
     }
@@ -743,6 +768,7 @@ static void hpet_realize(DeviceState *dev, Error **errp)
 static Property hpet_device_properties[] = {
     DEFINE_PROP_UINT8("timers", HPETState, num_timers, HPET_MIN_TIMERS),
     DEFINE_PROP_BIT("msi", HPETState, flags, HPET_MSI_SUPPORT, false),
+    DEFINE_PROP_UINT32(HPET_INTCAP, HPETState, intcap, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -751,7 +777,6 @@ static void hpet_device_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->realize = hpet_realize;
-    dc->no_user = 1;
     dc->reset = hpet_reset;
     dc->vmsd = &vmstate_hpet;
     dc->props = hpet_device_properties;

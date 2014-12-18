@@ -310,7 +310,6 @@ static const VMStateDescription vmstate_esp_pci_scsi = {
     .name = "pciespscsi",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(parent_obj, PCIESPState),
         VMSTATE_BUFFER_UNSAFE(dma_regs, PCIESPState, 0, 8 * sizeof(uint32_t)),
@@ -361,9 +360,9 @@ static int esp_pci_scsi_init(PCIDevice *dev)
                           "esp-io", 0x80);
 
     pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_IO, &pci->io);
-    s->irq = dev->irq[0];
+    s->irq = pci_allocate_irq(dev);
 
-    scsi_bus_new(&s->bus, d, &esp_pci_scsi_info, NULL);
+    scsi_bus_new(&s->bus, sizeof(s->bus), d, &esp_pci_scsi_info, NULL);
     if (!d->hotplugged) {
         scsi_bus_legacy_handle_cmdline(&s->bus, &err);
         if (err != NULL) {
@@ -378,6 +377,7 @@ static void esp_pci_scsi_uninit(PCIDevice *d)
 {
     PCIESPState *pci = PCI_ESP(d);
 
+    qemu_free_irq(pci->esp.irq);
     memory_region_destroy(&pci->io);
 }
 

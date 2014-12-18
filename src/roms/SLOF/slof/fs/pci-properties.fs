@@ -410,6 +410,7 @@
         dup IF                          \ IF any space present (propsize>0)
                 s" ranges" property     \ | write it into the device tree
         ELSE                            \ ELSE
+               s" " s" ranges" property
                 2drop                   \ | forget the properties
         THEN                            \ FI
         drop                            \ forget the address
@@ -589,6 +590,20 @@
         dup pci-sub-vendor@ ?dup IF encode-int s" subsystem-vendor-id" property THEN
         dup pci-device-assigned-addresses-prop
         pci-reg-props
+        pci-hotplug-enabled IF
+            \ QEMU uses static assignments for my-drc-index:
+            \ 40000000h + $bus << 8 + $slot << 3
+            dup dup pci-addr2bus 8 lshift
+            swap pci-addr2dev 3 lshift or
+            40000000 + encode-int s" ibm,my-drc-index" property
+            \ QEMU uses "Slot $bus*32$slotno" for loc-code
+            dup dup pci-addr2bus 20 *
+            swap pci-addr2dev +
+            a base !
+            s" Slot " rot $cathex
+            hex
+            encode-string s" ibm,loc-code" property
+        THEN
 ;
 
 \ set up bridge only properties

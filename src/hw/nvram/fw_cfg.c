@@ -42,6 +42,7 @@ typedef struct FWCfgEntry {
     uint8_t *data;
     void *callback_opaque;
     FWCfgCallback callback;
+    FWCfgReadCallback read_callback;
 } FWCfgEntry;
 
 struct FWCfgState {
@@ -249,8 +250,12 @@ static uint8_t fw_cfg_read(FWCfgState *s)
 
     if (s->cur_entry == FW_CFG_INVALID || !e->data || s->cur_offset >= e->len)
         ret = 0;
-    else
+    else {
+        if (e->read_callback) {
+            e->read_callback(e->callback_opaque, s->cur_offset);
+        }
         ret = e->data[s->cur_offset++];
+    }
 
     trace_fw_cfg_read(s, ret);
     return ret;
@@ -372,8 +377,7 @@ static const VMStateDescription vmstate_fw_cfg = {
     .name = "fw_cfg",
     .version_id = 2,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT16(cur_entry, FWCfgState),
         VMSTATE_UINT16_HACK(cur_offset, FWCfgState, is_version_1),
         VMSTATE_UINT32_V(cur_offset, FWCfgState, 2),
@@ -381,7 +385,10 @@ static const VMStateDescription vmstate_fw_cfg = {
     }
 };
 
-void fw_cfg_add_bytes(FWCfgState *s, uint16_t key, void *data, size_t len)
+static void fw_cfg_add_bytes_read_callback(FWCfgState *s, uint16_t key,
+                                           FWCfgReadCallback callback,
+                                           void *callback_opaque,
+                                           void *data, size_t len)
 {
     int arch = !!(key & FW_CFG_ARCH_LOCAL);
 
@@ -391,6 +398,13 @@ void fw_cfg_add_bytes(FWCfgState *s, uint16_t key, void *data, size_t len)
 
     s->entries[arch][key].data = data;
     s->entries[arch][key].len = (uint32_t)len;
+    s->entries[arch][key].read_callback = callback;
+    s->entries[arch][key].callback_opaque = callback_opaque;
+}
+
+void fw_cfg_add_bytes(FWCfgState *s, uint16_t key, void *data, size_t len)
+{
+    fw_cfg_add_bytes_read_callback(s, key, NULL, NULL, data, len);
 }
 
 void fw_cfg_add_string(FWCfgState *s, uint16_t key, const char *value)
@@ -444,8 +458,9 @@ void fw_cfg_add_callback(FWCfgState *s, uint16_t key, FWCfgCallback callback,
     s->entries[arch][key].callback = callback;
 }
 
-void fw_cfg_add_file(FWCfgState *s,  const char *filename,
-                     void *data, size_t len)
+void fw_cfg_add_file_callback(FWCfgState *s,  const char *filename,
+                              FWCfgReadCallback callback, void *callback_opaque,
+                              void *data, size_t len)
 {
     int i, index;
     size_t dsize;
@@ -459,7 +474,8 @@ void fw_cfg_add_file(FWCfgState *s,  const char *filename,
     index = be32_to_cpu(s->files->count);
     assert(index < FW_CFG_FILE_SLOTS);
 
-    fw_cfg_add_bytes(s, FW_CFG_FILE_FIRST + index, data, len);
+    fw_cfg_add_bytes_read_callback(s, FW_CFG_FILE_FIRST + index,
+                                   callback, callback_opaque, data, len);
 
     pstrcpy(s->files->f[index].name, sizeof(s->files->f[index].name),
             filename);
@@ -477,11 +493,17 @@ void fw_cfg_add_file(FWCfgState *s,  const char *filename,
     s->files->count = cpu_to_be32(index+1);
 }
 
+void fw_cfg_add_file(FWCfgState *s,  const char *filename,
+                     void *data, size_t len)
+{
+    fw_cfg_add_file_callback(s, filename, NULL, NULL, data, len);
+}
+
 static void fw_cfg_machine_ready(struct Notifier *n, void *data)
 {
     size_t len;
     FWCfgState *s = container_of(n, FWCfgState, machine_ready);
-    char *bootindex = get_boot_devices_list(&len);
+    char *bootindex = get_boot_devices_list(&len, false);
 
     fw_cfg_add_file(s, "bootorder", (uint8_t*)bootindex, len);
 }
@@ -561,8 +583,8 @@ static void fw_cfg_realize(DeviceState *dev, Error **errp)
 }
 
 static Property fw_cfg_properties[] = {
-    DEFINE_PROP_HEX32("ctl_iobase", FWCfgState, ctl_iobase, -1),
-    DEFINE_PROP_HEX32("data_iobase", FWCfgState, data_iobase, -1),
+    DEFINE_PROP_UINT32("ctl_iobase", FWCfgState, ctl_iobase, -1),
+    DEFINE_PROP_UINT32("data_iobase", FWCfgState, data_iobase, -1),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -576,7 +598,6 @@ static void fw_cfg_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->realize = fw_cfg_realize;
-    dc->no_user = 1;
     dc->reset = fw_cfg_reset;
     dc->vmsd = &vmstate_fw_cfg;
     dc->props = fw_cfg_properties;

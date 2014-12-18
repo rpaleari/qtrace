@@ -14,21 +14,18 @@
 #include <stdarg.h>
 #include <string.h>
 #include <of.h>
-#include <systemcall.h>
 #include <netdriver_int.h>
 #include <fileio.h>
+#include <ioctl.h>
 #include "modules.h"
 
 extern int vsprintf(char *, const char *, va_list);
 extern void _exit(int status);
 
-long _system_call(long arg0, long arg1, long arg2, long arg3, 
-		  long arg4, long arg5, long arg6, int nr);
 void exit(int status);
 int printk(const char*, ...);
 
-static int
-_syscall_open(const char* name, int flags)
+int open(const char* name, int flags)
 {
 	int fd, i;
 
@@ -65,8 +62,7 @@ _syscall_open(const char* name, int flags)
 	return fd;
 }
 
-static int
-_syscall_socket(int domain, int type, int proto, char *mac_addr)
+int socket(int domain, int type, int proto, char *mac_addr)
 {
 	snk_module_t *net_module;
 
@@ -88,8 +84,7 @@ _syscall_socket(int domain, int type, int proto, char *mac_addr)
 	return 0;
 }
 
-static int
-_syscall_close(int fd)
+int close(int fd)
 {
 	if(fd < 0 || fd >= FILEIO_MAX
 	|| fd_array[fd].type == FILEIO_TYPE_EMPTY
@@ -99,8 +94,7 @@ _syscall_close(int fd)
 	return fd_array[fd].close(&fd_array[fd]);
 }
 
-static long
-_syscall_read (int fd, char *buf, long len)
+ssize_t read(int fd, void *buf, size_t len)
 {
 	if(fd < 0 || fd >= FILEIO_MAX
 	|| fd_array[fd].type == FILEIO_TYPE_EMPTY
@@ -110,35 +104,34 @@ _syscall_read (int fd, char *buf, long len)
 	return fd_array[fd].read(&fd_array[fd], buf, len);
 }
 
-static long
-_syscall_write (int fd, char *buf, long len)
+ssize_t write (int fd, const void *buf, size_t len)
 {
     char dest_buf[512];
     char *dest_buf_ptr;
+    const char *dbuf = buf;
     int i;
-    if (fd == 1 || fd == 2)
-    {
+
+    if (fd == 1 || fd == 2) {
 	dest_buf_ptr = &dest_buf[0];
         for (i = 0; i < len && i < 256; i++)
         {
-            *dest_buf_ptr++ = *buf++;
-            if (buf[-1] == '\n')
+            *dest_buf_ptr++ = *dbuf++;
+            if (dbuf[-1] == '\n')
                 *dest_buf_ptr++ = '\r';
 	}
 	len = dest_buf_ptr - &dest_buf[0];
 	buf = &dest_buf[0];
     }
 
-	if(fd < 0 || fd >= FILEIO_MAX
+    if(fd < 0 || fd >= FILEIO_MAX
 	|| fd_array[fd].type == FILEIO_TYPE_EMPTY
 	|| fd_array[fd].write == 0)
 		return -1;
 
-	return fd_array[fd].write(&fd_array[fd], buf, len);
+    return fd_array[fd].write(&fd_array[fd], (void *)buf, len);
 }
 
-static long
-_syscall_lseek (int fd, long offset, int whence)
+ssize_t lseek (int fd, long offset, int whence)
 {
 	return 0; // this syscall is unused !!!
 #if 0
@@ -151,8 +144,7 @@ _syscall_lseek (int fd, long offset, int whence)
 #endif
 }
 
-static int
-_syscall_ioctl (int fd, int request, void* data)
+int ioctl (int fd, int request, void* data)
 {
 	if (fd < 0
 	 || fd >= FILEIO_MAX
@@ -173,8 +165,7 @@ _syscall_ioctl (int fd, int request, void* data)
 	return fd_array[fd].ioctl(&fd_array[fd], request, data);
 }
 
-static long
-_syscall_recv(int fd, void *packet, int packet_len, int flags)
+int recv(int fd, void *packet, int packet_len, int flags)
 {
 	snk_module_t *net_module;
 
@@ -187,8 +178,7 @@ _syscall_recv(int fd, void *packet, int packet_len, int flags)
 	return net_module->read(packet, packet_len);
 }
 
-static long
-_syscall_send(int fd, void *packet, int packet_len, int flags)
+int send(int fd, const void *packet, int packet_len, int flags)
 {
 	snk_module_t *net_module;
 
@@ -198,90 +188,28 @@ _syscall_send(int fd, void *packet, int packet_len, int flags)
 		return -1;
 	}
 
-	return net_module->write(packet, packet_len);
+	return net_module->write((void *)packet, packet_len);
 }
 
-static long
-_syscall_sendto(int fd, void *packet, int packet_len, int flags,
-	void *sock_addr, int sock_addr_len)
+int sendto(int fd, const void *packet, int packet_len, int flags,
+	   const void *sock_addr, int sock_addr_len)
 {
-	return _syscall_send(fd, packet, packet_len, flags);
+	return send(fd, packet, packet_len, flags);
 }
 
-
-
-
-
-
-
-
-long
-_system_call(long arg0, long arg1, long arg2, long arg3, 
-	     long arg4, long arg5, long arg6, int nr)
-{
-	long rc = -1;
-
-	switch (nr)
-	{
-	case _open_sc_nr:
-		rc = _syscall_open ((void *) arg0, arg1);
-		break;
-	case _read_sc_nr:
-		rc = _syscall_read (arg0, (void *) arg1, arg2);
-		break;
-	case _close_sc_nr:
-		_syscall_close (arg0);
-		break;
-	case _lseek_sc_nr:
-		rc = _syscall_lseek (arg0, arg1, arg2);
-		break;
-	case _write_sc_nr:
-		rc = _syscall_write (arg0, (void *) arg1, arg2);
-		break;
-	case _ioctl_sc_nr:
-		rc = _syscall_ioctl (arg0, arg1, (void *) arg2);
-		break;
-	case _socket_sc_nr:
-		switch (arg0)
-		{
-		case _sock_sc_nr:
-			rc = _syscall_socket (arg1, arg2, arg3, (char*) arg4);
-			break;
-		case _recv_sc_nr:
-			rc = _syscall_recv (arg1, (void *) arg2, arg3, arg4);
-			break;
-		case _send_sc_nr:
-			rc = _syscall_send (arg1, (void *) arg2, arg3, arg4);
-			break;
-		case _sendto_sc_nr:
-			rc = _syscall_sendto (arg1, (void *) arg2, arg3, arg4, (void *) arg5, arg6);
-			break;
-		default:
-			break;
-		}
-		break;
-	default:
-		break;
-	}
-
-	return rc;
-}
-
-void 
-exit(int status)
+void exit(int status)
 {
 	_exit(status);
 }
 
-int
-printk(const char* fmt, ...)
+int printk(const char* fmt, ...)
 {
 	int count;
 	va_list ap;
 	char buffer[256];
 	va_start (ap, fmt);
 	count=vsprintf(buffer, fmt, ap);
-	_syscall_write (1, buffer, count);
+	write (1, buffer, count);
 	va_end (ap);
 	return count;
 }

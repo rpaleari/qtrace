@@ -61,8 +61,8 @@ struct M48t59State {
     time_t   stop_time;
     /* Alarm & watchdog */
     struct tm alarm;
-    struct QEMUTimer *alrm_timer;
-    struct QEMUTimer *wd_timer;
+    QEMUTimer *alrm_timer;
+    QEMUTimer *wd_timer;
     /* NVRAM storage */
     uint8_t *buffer;
     /* Model parameters */
@@ -137,7 +137,7 @@ static void alarm_cb (void *opaque)
         /* Repeat once a second */
         next_time = 1;
     }
-    qemu_mod_timer(NVRAM->alrm_timer, qemu_get_clock_ns(rtc_clock) +
+    timer_mod(NVRAM->alrm_timer, qemu_clock_get_ns(rtc_clock) +
                     next_time * 1000);
     qemu_set_irq(NVRAM->IRQ, 0);
 }
@@ -146,10 +146,10 @@ static void set_alarm(M48t59State *NVRAM)
 {
     int diff;
     if (NVRAM->alrm_timer != NULL) {
-        qemu_del_timer(NVRAM->alrm_timer);
+        timer_del(NVRAM->alrm_timer);
         diff = qemu_timedate_diff(&NVRAM->alarm) - NVRAM->time_offset;
         if (diff > 0)
-            qemu_mod_timer(NVRAM->alrm_timer, diff * 1000);
+            timer_mod(NVRAM->alrm_timer, diff * 1000);
     }
 }
 
@@ -188,10 +188,10 @@ static void set_up_watchdog(M48t59State *NVRAM, uint8_t value)
 
     NVRAM->buffer[0x1FF0] &= ~0x80;
     if (NVRAM->wd_timer != NULL) {
-        qemu_del_timer(NVRAM->wd_timer);
+        timer_del(NVRAM->wd_timer);
         if (value != 0) {
             interval = (1 << (2 * (value & 0x03))) * ((value >> 2) & 0x1F);
-            qemu_mod_timer(NVRAM->wd_timer, ((uint64_t)time(NULL) * 1000) +
+            timer_mod(NVRAM->wd_timer, ((uint64_t)time(NULL) * 1000) +
                            ((interval * 1000) >> 4));
         }
     }
@@ -595,8 +595,7 @@ static const VMStateDescription vmstate_m48t59 = {
     .name = "m48t59",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8(lock, M48t59State),
         VMSTATE_UINT16(addr, M48t59State),
         VMSTATE_VBUFFER_UINT32(buffer, M48t59State, 0, NULL, 0, size),
@@ -609,10 +608,10 @@ static void m48t59_reset_common(M48t59State *NVRAM)
     NVRAM->addr = 0;
     NVRAM->lock = 0;
     if (NVRAM->alrm_timer != NULL)
-        qemu_del_timer(NVRAM->alrm_timer);
+        timer_del(NVRAM->alrm_timer);
 
     if (NVRAM->wd_timer != NULL)
-        qemu_del_timer(NVRAM->wd_timer);
+        timer_del(NVRAM->wd_timer);
 }
 
 static void m48t59_reset_isa(DeviceState *d)
@@ -700,8 +699,8 @@ static void m48t59_realize_common(M48t59State *s, Error **errp)
 {
     s->buffer = g_malloc0(s->size);
     if (s->model == 59) {
-        s->alrm_timer = qemu_new_timer_ns(rtc_clock, &alarm_cb, s);
-        s->wd_timer = qemu_new_timer_ns(vm_clock, &watchdog_cb, s);
+        s->alrm_timer = timer_new_ns(rtc_clock, &alarm_cb, s);
+        s->wd_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, &watchdog_cb, s);
     }
     qemu_get_timedate(&s->alarm, 0);
 
@@ -741,7 +740,7 @@ static int m48t59_init1(SysBusDevice *dev)
 static Property m48t59_isa_properties[] = {
     DEFINE_PROP_UINT32("size",    M48t59ISAState, state.size,    -1),
     DEFINE_PROP_UINT32("model",   M48t59ISAState, state.model,   -1),
-    DEFINE_PROP_HEX32( "io_base", M48t59ISAState, state.io_base,  0),
+    DEFINE_PROP_UINT32("io_base", M48t59ISAState, state.io_base,  0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
@@ -750,9 +749,10 @@ static void m48t59_isa_class_init(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->realize = m48t59_isa_realize;
-    dc->no_user = 1;
     dc->reset = m48t59_reset_isa;
     dc->props = m48t59_isa_properties;
+    /* Reason: needs to be wired up by m48t59_init_isa() */
+    dc->cannot_instantiate_with_device_add_yet = true;
 }
 
 static const TypeInfo m48t59_isa_info = {
@@ -765,7 +765,7 @@ static const TypeInfo m48t59_isa_info = {
 static Property m48t59_properties[] = {
     DEFINE_PROP_UINT32("size",    M48t59SysBusState, state.size,    -1),
     DEFINE_PROP_UINT32("model",   M48t59SysBusState, state.model,   -1),
-    DEFINE_PROP_HEX32( "io_base", M48t59SysBusState, state.io_base,  0),
+    DEFINE_PROP_UINT32("io_base", M48t59SysBusState, state.io_base,  0),
     DEFINE_PROP_END_OF_LIST(),
 };
 

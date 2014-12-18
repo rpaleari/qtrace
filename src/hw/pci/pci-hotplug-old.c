@@ -90,7 +90,7 @@ static PCIDevice *qemu_pci_hot_add_nic(Monitor *mon,
     qemu_opt_set(opts, "type", "nic");
 
     ret = net_client_init(opts, 0, &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         qerror_report_err(local_err);
         error_free(local_err);
         return NULL;
@@ -248,7 +248,7 @@ static PCIDevice *qemu_pci_hot_add_storage(Monitor *mon,
         }
         dev = pci_create(bus, devfn, "virtio-blk-pci");
         if (qdev_prop_set_drive(&dev->qdev, "drive", dinfo->bdrv) < 0) {
-            qdev_free(&dev->qdev);
+            object_unparent(OBJECT(dev));
             dev = NULL;
             break;
         }
@@ -322,7 +322,7 @@ static int pci_device_hot_remove(Monitor *mon, const char *pci_addr)
     }
 
     qdev_unplug(&d->qdev, &local_err);
-    if (error_is_set(&local_err)) {
+    if (local_err) {
         monitor_printf(mon, "%s\n", error_get_pretty(local_err));
         error_free(local_err);
         return -1;

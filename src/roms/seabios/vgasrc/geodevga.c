@@ -6,14 +6,14 @@
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
-#include "geodevga.h" // geodevga_init
-#include "farptr.h" // SET_FARVAR
 #include "biosvar.h" // GET_BDA
-#include "vgabios.h" // VGAREG_*
-#include "util.h" // memset
+#include "farptr.h" // SET_FARVAR
+#include "geodevga.h" // geodevga_setup
+#include "hw/pci.h" // pci_config_readl
+#include "hw/pci_regs.h" // PCI_BASE_ADDRESS_0
+#include "output.h" // dprintf
 #include "stdvga.h" // stdvga_crtc_write
-#include "pci.h" // pci_config_readl
-#include "pci_regs.h" // PCI_BASE_ADDRESS_0
+#include "vgabios.h" // VGAREG_*
 
 
 /****************************************************************
@@ -33,6 +33,9 @@ static u64 geode_msr_read(u32 msrAddr)
         : "c"(msrAddr)
         : "cc"
     );
+
+    dprintf(4, "%s(0x%08x) = 0x%08x-0x%08x\n"
+            , __func__, msrAddr, val.hi, val.lo);
     return val.val;
 }
 
@@ -41,6 +44,10 @@ static void geode_msr_mask(u32 msrAddr, u64 off, u64 on)
     union u64_u32_u uand, uor;
     uand.val = ~off;
     uor.val = on;
+
+    dprintf(4, "%s(0x%08x, 0x%016llx, 0x%016llx)\n"
+            , __func__, msrAddr, off, on);
+
     asm __volatile__ (
         "push   %%eax                   \n"
         "movw   $0x0AC1C, %%dx          \n"
@@ -140,7 +147,7 @@ static u32 geode_fp_read(int reg)
 {
     u32 val = geode_mem_read(GET_GLOBAL(GeodeVP) + VP_FP_START + reg);
     dprintf(4, "%s(0x%08x) = 0x%08x\n"
-            , __func__, GET_GLOBAL(GeodeVP) + reg, val);
+            , __func__, GET_GLOBAL(GeodeVP) + VP_FP_START + reg, val);
     return val;
 }
 
@@ -148,7 +155,7 @@ static void geode_fp_write(int reg, u32 val)
 {
     dprintf(4, "%s(0x%08x, 0x%08x)\n"
             , __func__, GET_GLOBAL(GeodeVP) + VP_FP_START + reg, val);
-    geode_mem_mask(GET_GLOBAL(GeodeVP) + reg, ~0, val);
+    geode_mem_mask(GET_GLOBAL(GeodeVP) + VP_FP_START + reg, ~0, val);
 }
 
 /****************************************************************
@@ -204,50 +211,10 @@ static u32 framebuffer_size(void)
 * Init Functions
 ****************************************************************/
 
-/* Set up the dc (display controller) portion of the geodelx
-*  The dc provides hardware support for VGA graphics.
-*/
-static void dc_setup(void)
+static void geodevga_set_output_mode(void)
 {
-    dprintf(2, "DC_SETUP\n");
-
-    geode_dc_write(DC_UNLOCK, DC_LOCK_UNLOCK);
-
-    /* zero memory config */
-    geode_dc_write(DC_FB_ST_OFFSET, 0x0);
-    geode_dc_write(DC_CB_ST_OFFSET, 0x0);
-    geode_dc_write(DC_CURS_ST_OFFSET, 0x0);
-
-    /* read fb-bar from pci, then point dc to the fb base */
-    u32 fb = GET_GLOBAL(GeodeFB);
-    if (geode_dc_read(DC_GLIU0_MEM_OFFSET) != fb)
-        geode_dc_write(DC_GLIU0_MEM_OFFSET, fb);
-
-    geode_dc_mask(DC_DISPLAY_CFG, ~DC_CFG_MSK, DC_DISPLAY_CFG_GDEN|DC_DISPLAY_CFG_TRUP);
-    geode_dc_write(DC_GENERAL_CFG, DC_DISPLAY_CFG_VGAE);
-
-    geode_dc_write(DC_UNLOCK, DC_LOCK_LOCK);
-
-    u32 fb_size = framebuffer_size(); // in byte
-    dprintf(1, "%d KB of video memory at 0x%08x\n", fb_size / 1024, fb);
-
-    /* update VBE variables */
-    SET_VGA(VBE_framebuffer, fb);
-    SET_VGA(VBE_total_memory, fb_size / 1024 / 64); // number of 64K blocks
-}
-
-/* Setup the vp (video processor) portion of the geodelx
-*  Under VGA modes the vp was handled by softvg from inside VSA2.
-*  Without a softvg module, access is only available through a pci bar.
-*  The High Mem Access virtual register is used to  configure the
-*   pci mmio bar from 16bit friendly io space.
-*/
-static void vp_setup(void)
-{
-    u32 msr_addr;
+    u64 msr_addr;
     u64 msr;
-
-    dprintf(2,"VP_SETUP\n");
 
     /* set output to crt and RGB/YUV */
     if (CONFIG_VGA_GEODEGX2)
@@ -274,7 +241,39 @@ static void vp_setup(void)
        dprintf(1, "output: CRT\n");
     }
     geode_msr_mask(msr_addr, ~msr, msr);
+}
 
+/* Set up the dc (display controller) portion of the geodelx
+*  The dc provides hardware support for VGA graphics.
+*/
+static void dc_setup(void)
+{
+    dprintf(2, "DC_SETUP\n");
+
+    geode_dc_write(DC_UNLOCK, DC_LOCK_UNLOCK);
+
+    /* zero memory config */
+    geode_dc_write(DC_FB_ST_OFFSET, 0x0);
+    geode_dc_write(DC_CB_ST_OFFSET, 0x0);
+    geode_dc_write(DC_CURS_ST_OFFSET, 0x0);
+
+    geode_dc_mask(DC_DISPLAY_CFG, ~DC_CFG_MSK, DC_DISPLAY_CFG_GDEN|DC_DISPLAY_CFG_TRUP);
+    geode_dc_write(DC_GENERAL_CFG, DC_GENERAL_CFG_VGAE);
+
+    geode_dc_write(DC_UNLOCK, DC_LOCK_LOCK);
+}
+
+/* Setup the vp (video processor) portion of the geodelx
+*  Under VGA modes the vp was handled by softvg from inside VSA2.
+*  Without a softvg module, access is only available through a pci bar.
+*  The High Mem Access virtual register is used to  configure the
+*   pci mmio bar from 16bit friendly io space.
+*/
+static void vp_setup(void)
+{
+    dprintf(2,"VP_SETUP\n");
+
+    geodevga_set_output_mode();
 
     /* Set mmio registers
     * there may be some timing issues here, the reads seem
@@ -295,6 +294,8 @@ static void vp_setup(void)
 
     /* setup flat panel */
     if (CONFIG_VGA_OUTPUT_PANEL || CONFIG_VGA_OUTPUT_CRT_PANEL) {
+        u64 msr;
+
         dprintf(1, "Setting up flat panel\n");
         /* write timing register */
         geode_fp_write(FP_PT1, 0x0);
@@ -369,16 +370,16 @@ static u8 geode_crtc_13[] VAR16 = {
     0x9b, 0x8d, 0x8f, 0x28, 0x40, 0x98, 0xb9, 0xa3,
     0xff };
 
-int geodevga_init(void)
+int geodevga_setup(void)
 {
-    int ret = stdvga_init();
+    int ret = stdvga_setup();
     if (ret)
         return ret;
 
-    dprintf(1,"GEODEVGA_INIT\n");
+    dprintf(1,"GEODEVGA_SETUP\n");
 
     if ((ret=legacyio_check())) {
-        dprintf(1,"GEODEVGA_INIT legacyio_check=0x%x\n",ret);
+        dprintf(1,"GEODEVGA_SETUP legacyio_check=0x%x\n",ret);
     }
 
     // Updated timings from geode datasheets, table 6-53 in particular
@@ -407,6 +408,23 @@ int geodevga_init(void)
     dprintf(1, "fb addr: 0x%08x\n", GET_GLOBAL(GeodeFB));
     dprintf(1, "dc addr: 0x%08x\n", GET_GLOBAL(GeodeDC));
     dprintf(1, "vp addr: 0x%08x\n", GET_GLOBAL(GeodeVP));
+
+    /* setup framebuffer */
+    geode_dc_write(DC_UNLOCK, DC_LOCK_UNLOCK);
+
+    /* read fb-bar from pci, then point dc to the fb base */
+    u32 fb = GET_GLOBAL(GeodeFB);
+    if (geode_dc_read(DC_GLIU0_MEM_OFFSET) != fb)
+        geode_dc_write(DC_GLIU0_MEM_OFFSET, fb);
+
+    geode_dc_write(DC_UNLOCK, DC_LOCK_LOCK);
+
+    u32 fb_size = framebuffer_size(); // in byte
+    dprintf(1, "%d KB of video memory at 0x%08x\n", fb_size / 1024, fb);
+
+    /* update VBE variables */
+    SET_VGA(VBE_framebuffer, fb);
+    SET_VGA(VBE_total_memory, fb_size / 1024 / 64); // number of 64K blocks
 
     vp_setup();
     dc_setup();

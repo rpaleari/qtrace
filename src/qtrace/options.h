@@ -7,16 +7,14 @@
 
 enum QTraceProfile {
   ProfileUnknown = 0,
-  ProfileWindowsXPSP0,
-  ProfileWindowsXPSP1,
-  ProfileWindowsXPSP2,
-  ProfileWindowsXPSP3,
-  ProfileWindows7SP0,
-  ProfileWindows7SP1,
+
+#define FOO(popt, pclass, pname) Profile ## pclass,
+#include "profiles/profiles.h"
+#undef FOO
 };
 
 struct QTraceOptions {
-#ifdef CONFIG_QTRACE_SYSCALL
+#ifdef CONFIG_QTRACE_TRACER
   // Disable syscall tracer
   bool trace_disabled;
 
@@ -38,6 +36,9 @@ struct QTraceOptions {
 
   // Tracking of foreign data pointers
   bool track_foreign;
+
+  // Should we track repeated memory accesses?
+  bool track_rep_accesses;
 #endif
 
 #ifdef CONFIG_QTRACE_TAINT
@@ -49,8 +50,8 @@ struct QTraceOptions {
 #ifdef __cplusplus
 extern "C" {
 #endif
-  enum QTraceProfile qtrace_parse_profile(const char *profilestring);
   const char *qtrace_get_profile_name(const enum QTraceProfile profile);
+  int qtrace_parse_option(int opt, const char *optarg);
 #ifdef __cplusplus
 }
 #endif

@@ -151,17 +151,6 @@ static const sd_cmd_type_t sd_cmd_type[64] = {
     sd_adtc, sd_none, sd_none, sd_none, sd_none, sd_none, sd_none, sd_none,
 };
 
-static const sd_cmd_type_t sd_acmd_type[64] = {
-    sd_none, sd_none, sd_none, sd_none, sd_none, sd_none, sd_ac,   sd_none,
-    sd_none, sd_none, sd_none, sd_none, sd_none, sd_adtc, sd_none, sd_none,
-    sd_none, sd_none, sd_none, sd_none, sd_none, sd_none, sd_adtc, sd_ac,
-    sd_none, sd_none, sd_none, sd_none, sd_none, sd_none, sd_none, sd_none,
-    sd_none, sd_none, sd_none, sd_none, sd_none, sd_none, sd_none, sd_none,
-    sd_none, sd_bcr,  sd_ac,   sd_none, sd_none, sd_none, sd_none, sd_none,
-    sd_none, sd_none, sd_none, sd_adtc, sd_none, sd_none, sd_none, sd_none,
-    sd_none, sd_none, sd_none, sd_none, sd_none, sd_none, sd_none, sd_none,
-};
-
 static const int sd_cmd_class[64] = {
     0,  0,  0,  0,  0,  9, 10,  0,  0,  0,  0,  1,  0,  0,  0,  0,
     2,  2,  2,  2,  3,  3,  3,  3,  4,  4,  4,  4,  6,  6,  6,  6,
@@ -493,6 +482,11 @@ static const VMStateDescription sd_vmstate = {
 SDState *sd_init(BlockDriverState *bs, bool is_spi)
 {
     SDState *sd;
+
+    if (bs && bdrv_is_read_only(bs)) {
+        fprintf(stderr, "sd_init: Cannot use read-only drive\n");
+        return NULL;
+    }
 
     sd = (SDState *) g_malloc0(sizeof(SDState));
     sd->buf = qemu_blockalign(bs, 512);

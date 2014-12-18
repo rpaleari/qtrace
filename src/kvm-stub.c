@@ -22,9 +22,11 @@
 KVMState *kvm_state;
 bool kvm_kernel_irqchip;
 bool kvm_async_interrupts_allowed;
+bool kvm_eventfds_allowed;
 bool kvm_irqfds_allowed;
 bool kvm_msi_via_irqfd_allowed;
 bool kvm_gsi_routing_allowed;
+bool kvm_gsi_direct_mapping;
 bool kvm_allowed;
 bool kvm_readonly_mem_allowed;
 
@@ -33,7 +35,7 @@ int kvm_init_vcpu(CPUState *cpu)
     return -ENOSYS;
 }
 
-int kvm_init(void)
+int kvm_init(MachineClass *mc)
 {
     return -ENOSYS;
 }
@@ -135,7 +137,13 @@ int kvm_irqchip_update_msi_route(KVMState *s, int virq, MSIMessage msg)
     return -ENOSYS;
 }
 
-int kvm_irqchip_add_irqfd_notifier(KVMState *s, EventNotifier *n, int virq)
+int kvm_irqchip_add_adapter_route(KVMState *s, AdapterInfo *adapter)
+{
+    return -ENOSYS;
+}
+
+int kvm_irqchip_add_irqfd_notifier(KVMState *s, EventNotifier *n,
+                                   EventNotifier *rn, int virq)
 {
     return -ENOSYS;
 }

@@ -26,6 +26,7 @@
 #include "hw/pci/slotid_cap.h"
 #include "exec/memory.h"
 #include "hw/pci/pci_bus.h"
+#include "hw/hotplug.h"
 
 #define TYPE_PCI_BRIDGE_DEV "pci-bridge"
 #define PCI_BRIDGE_DEV(obj) \
@@ -53,6 +54,7 @@ static int pci_bridge_dev_initfn(PCIDevice *dev)
     if (err) {
         goto bridge_error;
     }
+    dev->config[PCI_INTERRUPT_PIN] = 0x1;
     memory_region_init(&bridge_dev->bar, OBJECT(dev), "shpc-bar", shpc_bar_size(dev));
     err = shpc_init(dev, &br->sec_bus, &bridge_dev->bar, 0);
     if (err) {
@@ -73,7 +75,6 @@ static int pci_bridge_dev_initfn(PCIDevice *dev)
      * Check whether that works well. */
     pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY |
 		     PCI_BASE_ADDRESS_MEM_TYPE_64, &bridge_dev->bar);
-    dev->config[PCI_INTERRUPT_PIN] = 0x1;
     return 0;
 msi_error:
     slotid_cap_cleanup(dev);
@@ -136,6 +137,8 @@ static void pci_bridge_dev_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+    HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(klass);
+
     k->init = pci_bridge_dev_initfn;
     k->exit = pci_bridge_dev_exitfn;
     k->config_write = pci_bridge_dev_write_config;
@@ -148,6 +151,8 @@ static void pci_bridge_dev_class_init(ObjectClass *klass, void *data)
     dc->props = pci_bridge_dev_properties;
     dc->vmsd = &pci_bridge_dev_vmstate;
     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
+    hc->plug = shpc_device_hotplug_cb;
+    hc->unplug = shpc_device_hot_unplug_cb;
 }
 
 static const TypeInfo pci_bridge_dev_info = {
@@ -155,6 +160,10 @@ static const TypeInfo pci_bridge_dev_info = {
     .parent        = TYPE_PCI_BRIDGE,
     .instance_size = sizeof(PCIBridgeDev),
     .class_init = pci_bridge_dev_class_init,
+    .interfaces = (InterfaceInfo[]) {
+        { TYPE_HOTPLUG_HANDLER },
+        { }
+    }
 };
 
 static void pci_bridge_dev_register(void)

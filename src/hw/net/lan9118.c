@@ -439,7 +439,7 @@ static void lan9118_reset(DeviceState *d)
     s->afc_cfg = 0;
     s->e2p_cmd = 0;
     s->e2p_data = 0;
-    s->free_timer_start = qemu_get_clock_ns(vm_clock) / 40;
+    s->free_timer_start = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) / 40;
 
     ptimer_stop(s->timer);
     ptimer_set_count(s->timer, 0xffff);
@@ -727,14 +727,14 @@ static void tx_fifo_push(lan9118_state *s, uint32_t val)
         s->txp->cmd_a = val & 0x831f37ff;
         s->txp->fifo_used++;
         s->txp->state = TX_B;
+        s->txp->buffer_size = extract32(s->txp->cmd_a, 0, 11);
+        s->txp->offset = extract32(s->txp->cmd_a, 16, 5);
         break;
     case TX_B:
         if (s->txp->cmd_a & 0x2000) {
             /* First segment */
             s->txp->cmd_b = val;
             s->txp->fifo_used++;
-            s->txp->buffer_size = s->txp->cmd_a & 0x7ff;
-            s->txp->offset = (s->txp->cmd_a >> 16) & 0x1f;
             /* End alignment does not include command words.  */
             n = (s->txp->buffer_size + s->txp->offset + 3) >> 2;
             switch ((n >> 24) & 3) {
@@ -763,7 +763,7 @@ static void tx_fifo_push(lan9118_state *s, uint32_t val)
         if (s->txp->buffer_size <= 0 && s->txp->pad != 0) {
             s->txp->pad--;
         } else {
-            n = 4;
+            n = MIN(4, s->txp->buffer_size + s->txp->offset);
             while (s->txp->offset) {
                 val >>= 8;
                 n--;
@@ -1236,7 +1236,7 @@ static uint64_t lan9118_readl(void *opaque, hwaddr offset,
     case CSR_WORD_SWAP:
         return s->word_swap;
     case CSR_FREE_RUN:
-        return (qemu_get_clock_ns(vm_clock) / 40) - s->free_timer_start;
+        return (qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) / 40) - s->free_timer_start;
     case CSR_RX_DROP:
         /* TODO: Implement dropped frames counter.  */
         return 0;

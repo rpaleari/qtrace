@@ -44,11 +44,22 @@ static inline void flush_cache(void* r, long n)
 		     :: "memory", "cc", "r0", "ctr");
 }
 
-static inline void
-eieio(void)
+static inline void eieio(void)
 {
 	asm volatile ("eieio":::"memory");
 }
+
+static inline void barrier(void)
+{
+	asm volatile("" : : : "memory");
+}
+#define cpu_relax() barrier()
+
+static inline void sync(void)
+{
+	asm volatile ("sync" ::: "memory");
+}
+#define mb() sync()
 
 #endif /* __ASSEMBLER__ */
 

@@ -178,7 +178,30 @@ call_client:
 	mflr 4
 	mtctr 3
 	bl swap_ci_regs
+	/* Check if LE loading */
+	cmpwi 0,13,1
+	beq 0f
 	bctrl
+	b 1f
+0:	/* handle LE */
+	mfmsr 13
+	xori  13,13,1
+	mtsrr1 13
+	mfctr 13
+	mr 12,13
+	mtsrr0 13
+	rfid
+#if 0 /* in case we return back, still to be tested */
+	.long 0x05009f42; /* bcl 20,31,$+4   */
+	.long 0xa602c87d; /* mflr r14    */
+	.long 0x1c00ce39; /* addi r14,r14,28   */
+	.long 0xa600e07d; /* mfmsr r15    */
+	.long 0x0100ef69; /* xori r15,r15,1   */
+	.long 0xa603da7d; /* mtsrr0 r14    */
+	.long 0xa603fb7d; /* mtsrr1 r15    */
+	.long 0x2400004c; /* rfid */
+#endif
+1:
 	bl swap_ci_regs
 	mtlr 4
 	li 3, -1 # client app return

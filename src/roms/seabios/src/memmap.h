@@ -17,16 +17,13 @@ struct e820entry {
 };
 
 void add_e820(u64 start, u64 size, u32 type);
-void memmap_finalize(void);
+void memmap_prepboot(void);
 
 // A typical OS page size
 #define PAGE_SIZE 4096
 
-// e820 map storage (defined in system.c)
+// e820 map storage
 extern struct e820entry e820_list[];
 extern int e820_count;
-
-// Space for exported bios tables (defined in misc.c)
-extern char BiosTableSpace[];
 
 #endif // e820map.h

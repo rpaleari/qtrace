@@ -18,8 +18,8 @@ endif
 include $(TOP)/make.rules
 
 
-OBJS	= sbrk.o io.o ioctl.o
-OBJDIRS = socket/socket.o time/time.o
+OBJS	= sbrk.o
+OBJDIRS = time/time.o
 SUBDIRS = $(filter-out ./,$(dir $(OBJDIRS)))
 
 

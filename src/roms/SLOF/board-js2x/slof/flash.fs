@@ -36,8 +36,8 @@ ff000000 CONSTANT flash-addr
   BEGIN dup 0 > WHILE >r dup erase-flash-block 2dup write-flash-block
   >r 20000 + r> 20000 + r> 20000 - REPEAT drop 2drop -1 0 flash! ;
 
-: flash-it  load-base 0 e0000  flash ;
-: flash4    load-base 0 400000 flash ;
+: flash-it  get-load-base 0 e0000  flash ;
+: flash4    get-load-base 0 400000 flash ;
 
 \ for update-flash
 : flash-image-size  ( addr -- size )  30 + rx@  ;

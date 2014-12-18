@@ -17,7 +17,7 @@ static void track_copy_input_labels(SyscallArg *arg) {
   hwaddr phyaddr = gbl_context.cb_va2phy(arg->addr);
   assert(phyaddr != static_cast<hwaddr>(-1));
   gbl_context.taint_engine->copyMemoryLabels(arg->taint_labels_in,
-                                             phyaddr, arg->getSize());
+					     phyaddr, arg->getSize());
 }
 
 static void track_syscall_arg(SyscallArg *arg, target_ulong label) {
@@ -35,7 +35,7 @@ static void track_syscall_arg(SyscallArg *arg, target_ulong label) {
       (arg->indata.getMaxLength() != arg->outdata.getMaxLength()) &&
       notify_taint_check_memory(arg->addr, arg->getSize())) {
     TRACE("Applying 'big buffer' workaround for argument %.8x-%.8x",
-          arg->addr, arg->addr + arg->getSize() - 1);
+	  arg->addr, arg->addr + arg->getSize() - 1);
     notify_taint_clearM(arg->addr, arg->getSize());
   }
 
@@ -43,10 +43,10 @@ static void track_syscall_arg(SyscallArg *arg, target_ulong label) {
   if (arg->direction == DirectionIn) {
     if (notify_taint_check_memory(arg->addr, arg->getSize())) {
       TRACE("Found tainted IN | IN/OUT arg in range %.8x-%.8x "
-            "[phy %.8x-%.8x]",
-            arg->addr, arg->addr + arg->getSize() - 1,
-            gbl_context.cb_va2phy(arg->addr),
-            gbl_context.cb_va2phy(arg->addr + arg->getSize() - 1));
+	    "[phy %.8x-%.8x]",
+	    arg->addr, arg->addr + arg->getSize() - 1,
+	    gbl_context.cb_va2phy(arg->addr),
+	    gbl_context.cb_va2phy(arg->addr + arg->getSize() - 1));
       track_copy_input_labels(arg);
     }
   }
@@ -85,4 +85,15 @@ void track_syscall_deps(Syscall &syscall) {
   assert(b == true);
   syscall.taint_label_retval = get_new_label();
   notify_taint_register(false, retreg, syscall.taint_label_retval);
+}
+
+void track_sysarg_reg(SyscallArg *arg, const std::string &reg_name) {
+  // Get the ID for this register
+  target_ulong regno;
+  bool b = gbl_context.taint_engine->
+    getRegisterIdByName(reg_name.c_str(), regno);
+  assert(b == true);
+
+  // Update argument labels
+  gbl_context.taint_engine->copyRegisterLabels(arg->taint_labels_in, regno);
 }

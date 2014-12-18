@@ -63,8 +63,8 @@ ratio=auto;
                 else:
                     label = ""
 
-                s += '"%s" -> "%s"%s;\n' % \
-                     (self.__getNodeName(suc), self.__getNodeName(pre), label)
+                s += ('"%s" -> "%s"%s;\n' %
+                      (self.__getNodeName(suc), self.__getNodeName(pre), label))
 
         s += "}"
         return s
@@ -117,9 +117,9 @@ ratio=auto;
     def __generateNode(self, node):
         label = "%s | count: %d" % (node.getValue(), node.getAttribute("count"))
 
-        s = '"%s" [label="%s", shape=record, style=filled, ' \
-            'fillcolor="%s"];\n' % \
-            (self.__getNodeName(node), label, node.getAttribute("color"))
+        s = ('"%s" [label="%s", shape=record, style=filled, '
+             'fillcolor="%s"];\n' %
+             (self.__getNodeName(node), label, node.getAttribute("color")))
 
         return s
 

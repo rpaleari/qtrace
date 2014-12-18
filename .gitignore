@@ -5,6 +5,7 @@
 config*.mak
 src/config-host.h
 src/config.log
+src/config.status
 src/i386-softmmu
 src/i386-linux-user
 src/libqemu*.a
@@ -14,6 +15,7 @@ src/pc-bios/optionrom/*.img
 src/pc-bios/optionrom/*.raw
 src/pixman/test/a1-trap-test
 src/pixman/test/alphamap
+src/qapi-event.*
 src/qapi-types.*
 src/qapi-visit.*
 src/qemu-bridge-helper
@@ -24,12 +26,13 @@ src/qemu-io
 src/qemu-nbd
 src/qemu-options.def
 src/qtrace/libqtrace.so
-src/qtrace/pb/syscall.pb.*
+src/qtrace/trace/plugin-systrace/pb/syscall.pb.*
 src/qtrace/tests/gtest_main.a
 src/qtrace/tests/*_unittest
 src/qga/qapi-generated
 src/qmp-commands.h
 src/qmp-marshal.c
+src/tests/qemu-iotests/check
 src/trace/generated-events.*
 src/trace/generated-tracers.*
 tools/trace/syscall_pb2.py

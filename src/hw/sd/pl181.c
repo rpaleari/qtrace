@@ -491,6 +491,10 @@ static int pl181_init(SysBusDevice *sbd)
     qdev_init_gpio_out(dev, s->cardstatus, 2);
     dinfo = drive_get_next(IF_SD);
     s->card = sd_init(dinfo ? dinfo->bdrv : NULL, false);
+    if (s->card == NULL) {
+        return -1;
+    }
+
     return 0;
 }
 
@@ -502,7 +506,6 @@ static void pl181_class_init(ObjectClass *klass, void *data)
     sdc->init = pl181_init;
     k->vmsd = &vmstate_pl181;
     k->reset = pl181_reset;
-    k->no_user = 1;
 }
 
 static const TypeInfo pl181_info = {

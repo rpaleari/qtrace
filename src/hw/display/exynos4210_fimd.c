@@ -1845,7 +1845,7 @@ static const VMStateDescription exynos4210_fimd_window_vmstate = {
     .name = "exynos4210.fimd_window",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32(wincon, Exynos4210fimdWindow),
         VMSTATE_UINT32_ARRAY(buf_start, Exynos4210fimdWindow, 3),
         VMSTATE_UINT32_ARRAY(buf_end, Exynos4210fimdWindow, 3),
@@ -1875,7 +1875,7 @@ static const VMStateDescription exynos4210_fimd_vmstate = {
     .version_id = 1,
     .minimum_version_id = 1,
     .post_load = exynos4210_fimd_load,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(vidcon, Exynos4210fimdState, 4),
         VMSTATE_UINT32_ARRAY(vidtcon, Exynos4210fimdState, 4),
         VMSTATE_UINT32(shadowcon, Exynos4210fimdState),
@@ -1917,7 +1917,7 @@ static int exynos4210_fimd_init(SysBusDevice *dev)
     memory_region_init_io(&s->iomem, OBJECT(s), &exynos4210_fimd_mmio_ops, s,
             "exynos4210.fimd", FIMD_REGS_SIZE);
     sysbus_init_mmio(dev, &s->iomem);
-    s->console = graphic_console_init(DEVICE(dev), &exynos4210_fimd_ops, s);
+    s->console = graphic_console_init(DEVICE(dev), 0, &exynos4210_fimd_ops, s);
 
     return 0;
 }

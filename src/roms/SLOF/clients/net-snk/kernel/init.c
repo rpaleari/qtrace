@@ -36,7 +36,6 @@ extern uint64_t tb_freq;
 int glue_init(snk_kernel_t *, unsigned int *, size_t, size_t);
 void glue_release(void);
 
-static char save_vector[0x4000];
 extern char _lowmem_start;
 extern char _lowmem_end;
 extern char __client_start;
@@ -61,8 +60,7 @@ snk_kernel_t snk_kernel_interface = {
 	.modules_load     = insmod_by_type,
 };
 
-void *
-malloc_aligned(size_t size, int align)
+void * malloc_aligned(size_t size, int align)
 {
 	unsigned long p = (unsigned long) malloc(size + align - 1);
 	p = p + align - 1;
@@ -71,40 +69,7 @@ malloc_aligned(size_t size, int align)
 	return (void *) p;
 }
 
-static void
-copy_exception_vectors(void)
-{
-	char *dest;
-	char *src;
-	int len;
-
-	dest = save_vector;
-	src = (char *) 0x200;
-	len = &_lowmem_end - &_lowmem_start;
-	memcpy(dest, src, len);
-
-	dest = (char *) 0x200;
-	src = &_lowmem_start;
-	memcpy(dest, src, len);
-	flush_cache(dest, len);
-}
-
-static void
-restore_exception_vectors(void)
-{
-	char *dest;
-	char *src;
-	int len;
-
-	dest = (char *) 0x200;
-	src = save_vector;
-	len = &_lowmem_end - &_lowmem_start;
-	memcpy(dest, src, len);
-	flush_cache(dest, len);
-}
-
-int
-_start_kernel(unsigned long p0, unsigned long p1)
+int _start_kernel(unsigned long p0, unsigned long p1)
 {
 	int rc;
 	unsigned int timebase;
@@ -122,20 +87,11 @@ _start_kernel(unsigned long p0, unsigned long p1)
 		return -1;
 
 	tb_freq = (uint64_t) timebase;
-	copy_exception_vectors();
 	modules_init();
 	rc = _start((unsigned char *) p0, p1);
 	modules_term();
-	restore_exception_vectors();
 
 	glue_release();
 	return rc;
 }
 
-
-void
-exception_forward(void)
-{
-	restore_exception_vectors();
-	undo_exception();
-}

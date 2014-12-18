@@ -65,12 +65,12 @@ static void kvm_pit_update_clock_offset(KVMPITState *s)
 
     /*
      * Measure the delta between CLOCK_MONOTONIC, the base used for
-     * kvm_pit_channel_state::count_load_time, and vm_clock. Take the
+     * kvm_pit_channel_state::count_load_time, and QEMU_CLOCK_VIRTUAL. Take the
      * minimum of several samples to filter out scheduling noise.
      */
     clock_offset = INT64_MAX;
     for (i = 0; i < CALIBRATION_ROUNDS; i++) {
-        offset = qemu_get_clock_ns(vm_clock);
+        offset = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         clock_gettime(CLOCK_MONOTONIC, &ts);
         offset -= ts.tv_nsec;
         offset -= (int64_t)ts.tv_sec * 1000000000;
@@ -194,7 +194,7 @@ static void kvm_pit_set_gate(PITCommonState *s, PITChannelState *sc, int val)
     case 5:
         if (sc->gate < val) {
             /* restart counting on rising edge */
-            sc->count_load_time = qemu_get_clock_ns(vm_clock);
+            sc->count_load_time = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
         }
         break;
     }
@@ -268,9 +268,9 @@ static void kvm_pit_realizefn(DeviceState *dev, Error **errp)
         return;
     }
     switch (s->lost_tick_policy) {
-    case LOST_TICK_DELAY:
+    case LOST_TICK_POLICY_DELAY:
         break; /* enabled by default */
-    case LOST_TICK_DISCARD:
+    case LOST_TICK_POLICY_DISCARD:
         if (kvm_check_extension(kvm_state, KVM_CAP_REINJECT_CONTROL)) {
             struct kvm_reinject_control control = { .pit_reinject = 0 };
 
@@ -298,9 +298,9 @@ static void kvm_pit_realizefn(DeviceState *dev, Error **errp)
 }
 
 static Property kvm_pit_properties[] = {
-    DEFINE_PROP_HEX32("iobase", PITCommonState, iobase,  -1),
+    DEFINE_PROP_UINT32("iobase", PITCommonState, iobase,  -1),
     DEFINE_PROP_LOSTTICKPOLICY("lost_tick_policy", KVMPITState,
-                               lost_tick_policy, LOST_TICK_DELAY),
+                               lost_tick_policy, LOST_TICK_POLICY_DELAY),
     DEFINE_PROP_END_OF_LIST(),
 };
 

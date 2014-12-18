@@ -25,6 +25,7 @@ INSTANCE VARIABLE max-transfer
 INSTANCE VARIABLE my-block
 INSTANCE VARIABLE adr
 INSTANCE VARIABLE len
+INSTANCE VARIABLE fail-count
 
 : open
   s" block-size" ['] $call-parent CATCH IF 2drop false EXIT THEN
@@ -50,9 +51,17 @@ INSTANCE VARIABLE len
   r> dup negate len +! dup adr +! offset +! ELSE 2drop THEN
 
   \ Now, in a loop read max. max-transfer sized runs of whole blocks.
+  0 fail-count !
   BEGIN len @ block-size @ >= WHILE
-  adr @ block+remainder drop len @ max-transfer @ min block-size @ / read-blocks
-  block-size @ * dup negate len +! dup adr +! offset +! REPEAT
+    adr @ block+remainder drop len @ max-transfer @ min block-size @ / read-blocks
+    dup 0= IF
+      1 fail-count +!
+      fail-count @ 5 >= IF r> drop EXIT THEN
+    ELSE
+      0 fail-count !
+    THEN
+    block-size @ * dup negate len +! dup adr +! offset +!
+  REPEAT
 
   \ And lastly, handle a partial block at the end.
   len @ IF my-block @ block+remainder drop 1 read-blocks drop

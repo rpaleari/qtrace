@@ -23,6 +23,17 @@
 #include "qapi-types.h"
 #include "exec/cpu-common.h"
 
+#define QEMU_VM_FILE_MAGIC           0x5145564d
+#define QEMU_VM_FILE_VERSION_COMPAT  0x00000002
+#define QEMU_VM_FILE_VERSION         0x00000003
+
+#define QEMU_VM_EOF                  0x00
+#define QEMU_VM_SECTION_START        0x01
+#define QEMU_VM_SECTION_PART         0x02
+#define QEMU_VM_SECTION_END          0x03
+#define QEMU_VM_SECTION_FULL         0x04
+#define QEMU_VM_SUBSECTION           0x05
+
 struct MigrationParams {
     bool blk;
     bool shared;
@@ -50,6 +61,7 @@ struct MigrationState
     bool enabled_capabilities[MIGRATION_CAPABILITY_MAX];
     int64_t xbzrle_cache_size;
     int64_t setup_time;
+    int64_t dirty_sync_count;
 };
 
 void process_incoming_migration(QEMUFile *f);
@@ -98,10 +110,9 @@ MigrationState *migrate_get_current(void);
 uint64_t ram_bytes_remaining(void);
 uint64_t ram_bytes_transferred(void);
 uint64_t ram_bytes_total(void);
+void free_xbzrle_decoded_buf(void);
 
 void acct_update_position(QEMUFile *f, size_t size, bool zero);
-
-extern SaveVMHandlers savevm_ram_handlers;
 
 uint64_t dup_mig_bytes_transferred(void);
 uint64_t dup_mig_pages_transferred(void);
@@ -113,6 +124,7 @@ uint64_t xbzrle_mig_bytes_transferred(void);
 uint64_t xbzrle_mig_pages_transferred(void);
 uint64_t xbzrle_mig_pages_overflow(void);
 uint64_t xbzrle_mig_pages_cache_miss(void);
+double xbzrle_mig_cache_miss_rate(void);
 
 void ram_handle_compressed(void *host, uint8_t ch, uint64_t size);
 

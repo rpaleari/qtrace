@@ -5,12 +5,16 @@
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
-#include "util.h" // memcpy_far
-#include "biosvar.h" // BIOS_CONFIG_TABLE
-#include "ioport.h" // inb
-#include "memmap.h" // E820_RAM
-#include "pic.h" // eoi_pic2
+#include "biosvar.h" // GET_GLOBAL
 #include "bregs.h" // struct bregs
+#include "hw/pic.h" // pic_reset
+#include "hw/ps2port.h" // PORT_A20
+#include "malloc.h" // LegacyRamSize
+#include "memmap.h" // E820_RAM
+#include "output.h" // debug_enter
+#include "string.h" // memcpy_far
+#include "util.h" // handle_1553
+#include "x86.h" // inb
 
 // Use PS2 System Control port A to set A20 enable
 static inline u8
@@ -111,12 +115,13 @@ handle_1587(struct bregs *regs)
     SET_FARVAR(gdt_seg, gdt_far[1], GDT_DATA | GDT_LIMIT((6*sizeof(u64))-1)
                | GDT_BASE(loc));
     // Initialize CS descriptor
-    SET_FARVAR(gdt_seg, gdt_far[4], GDT_CODE | GDT_LIMIT(BUILD_BIOS_SIZE-1)
-               | GDT_BASE(BUILD_BIOS_ADDR));
+    u64 lim = GDT_LIMIT(0x0ffff);
+    if (in_post())
+        lim = GDT_GRANLIMIT(0xffffffff);
+    SET_FARVAR(gdt_seg, gdt_far[4], GDT_CODE | lim | GDT_BASE(BUILD_BIOS_ADDR));
     // Initialize SS descriptor
     loc = (u32)MAKE_FLATPTR(GET_SEG(SS), 0);
-    SET_FARVAR(gdt_seg, gdt_far[5], GDT_DATA | GDT_LIMIT(0x0ffff)
-               | GDT_BASE(loc));
+    SET_FARVAR(gdt_seg, gdt_far[5], GDT_DATA | lim | GDT_BASE(loc));
 
     u16 count = regs->cx;
     asm volatile(
@@ -174,7 +179,7 @@ handle_1587(struct bregs *regs)
 static void
 handle_1588(struct bregs *regs)
 {
-    u32 rs = GET_GLOBAL(RamSize);
+    u32 rs = GET_GLOBAL(LegacyRamSize);
 
     // According to Ralf Brown's interrupt the limit should be 15M,
     // but real machines mostly return max. 63M.
@@ -186,12 +191,13 @@ handle_1588(struct bregs *regs)
 }
 
 // Switch to protected mode
-static void
+void VISIBLE16
 handle_1589(struct bregs *regs)
 {
+    debug_enter(regs, DEBUG_HDL_15);
     set_a20(1);
 
-    set_pics(regs->bl, regs->bh);
+    pic_reset(regs->bl, regs->bh);
 
     u64 *gdt_far = (void*)(regs->si + 0);
     u16 gdt_seg = regs->es;
@@ -270,7 +276,7 @@ handle_15e801(struct bregs *regs)
     // regs.u.r16.ax = 0;
     // regs.u.r16.bx = 0;
 
-    u32 rs = GET_GLOBAL(RamSize);
+    u32 rs = GET_GLOBAL(LegacyRamSize);
 
     // Get the amount of extended memory (above 1M)
     if (rs > 16*1024*1024) {
@@ -289,10 +295,6 @@ handle_15e801(struct bregs *regs)
 
     set_success(regs);
 }
-
-// Info on e820 map location and size.
-struct e820entry e820_list[CONFIG_MAX_E820] VAR16VISIBLE;
-int e820_count VAR16VISIBLE;
 
 static void
 handle_15e820(struct bregs *regs)
@@ -349,11 +351,11 @@ handle_15(struct bregs *regs)
     case 0x52: handle_1552(regs); break;
     case 0x53: handle_1553(regs); break;
     case 0x5f: handle_155f(regs); break;
+    case 0x7f: handle_157f(regs); break;
     case 0x83: handle_1583(regs); break;
     case 0x86: handle_1586(regs); break;
     case 0x87: handle_1587(regs); break;
     case 0x88: handle_1588(regs); break;
-    case 0x89: handle_1589(regs); break;
     case 0x90: handle_1590(regs); break;
     case 0x91: handle_1591(regs); break;
     case 0xc0: handle_15c0(regs); break;

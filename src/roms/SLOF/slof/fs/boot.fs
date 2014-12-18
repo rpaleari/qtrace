@@ -70,13 +70,62 @@ defer go ( -- )
    THEN
    -6d boot-exception-handler ABORT
 ;
-: go-64 ( -- )
-   state-valid @ IF
-      0 ciregs >r3 ! 0 ciregs >r4 !
-      go-args 2@ go-entry start-elf64 client-data
-      claim-list elf-release 0 to claim-list
-   THEN
-   -6d boot-exception-handler ABORT
+
+: go-64 ( args len entry r2 -- )
+    0 ciregs >r3 ! 0 ciregs >r4 !
+    start-elf64 client-data
+    claim-list elf-release 0 to claim-list
+;
+
+: set-le ( -- )
+    1 ciregs >r13 !
+;
+
+: set-be ( -- )
+    0 ciregs >r13 !
+;
+
+: go-64-be ( -- )
+    state-valid @ IF
+	set-be
+	go-args 2@
+	go-entry @
+	go-entry 8 + @
+	go-64
+    THEN
+    -6d boot-exception-handler ABORT
+;
+
+
+: go-32-be
+    set-be
+    go-32
+;
+
+: go-32-lev1
+    set-le
+    go-32
+;
+
+: go-64-lev1
+    state-valid @ IF
+	go-args 2@
+	go-entry @ xbflip
+	go-entry 8 + @ xbflip
+	set-le
+	go-64
+    THEN
+    -6d boot-exception-handler ABORT
+;
+
+: go-64-lev2
+    state-valid @ IF
+	go-args 2@
+	go-entry 0
+	set-le
+	go-64
+    THEN
+    -6d boot-exception-handler ABORT
 ;
 
 : load-elf-init ( arg len file-addr -- success )
@@ -90,8 +139,11 @@ defer go ( -- )
 
    ( arg len true claim-list entry elftype )
    CASE
-      1  OF ['] go-32 ENDOF           ( arg len true claim-list entry go )
-      2  OF ['] go-64 ENDOF           ( arg len true claim-list entry go )
+      1  OF ['] go-32-be   ENDOF           ( arg len true claim-list entry go )
+      2  OF ['] go-64-be   ENDOF           ( arg len true claim-list entry go )
+      3  OF ['] go-64-lev1 ENDOF           ( arg len true claim-list entry go )
+      4  OF ['] go-64-lev2 ENDOF           ( arg len true claim-list entry go )
+      5  OF ['] go-32-lev1 ENDOF           ( arg len true claim-list entry go )
       dup OF ['] no-go to go
          2drop 3drop false EXIT   ENDOF                   ( false )
    ENDCASE
@@ -107,7 +159,7 @@ defer go ( -- )
 ;
 
 : init-program ( -- )
-   $bootargs LOAD-BASE ['] load-elf-init CATCH ?dup IF
+   $bootargs get-load-base ['] load-elf-init CATCH ?dup IF
       boot-exception-handler
       2drop 2drop false          \ Could not claim
    ELSE IF
@@ -142,7 +194,7 @@ defer go ( -- )
       THEN
       encode-string s" bootpath" set-chosen
       $bootargs encode-string s" bootargs" set-chosen
-      LOAD-BASE s" load" 3 pick ['] $call-method CATCH IF
+      get-load-base s" load" 3 pick ['] $call-method CATCH IF
 	-67 boot-exception-handler 3drop drop false
       ELSE
 	 dup 0> IF
@@ -191,11 +243,11 @@ defer go ( -- )
 
 : (go-and-catch)  ( -- )
    \ Recommended Practice: Forth Source Support (scripts starting with comment)
-   load-base c@ 5c =  load-base 1+ c@ 20 = AND IF
+   get-load-base c@ 5c =  get-load-base 1+ c@ 20 = AND IF
       load-size alloc-mem            ( allocated-addr )
       ?dup 0= IF ." alloc-mem failed." cr EXIT THEN
       load-size >r >r                ( R: allocate-addr load-size )
-      load-base r@ load-size move    \ Move away from load-base
+      get-load-base r@ load-size move    \ Move away from load-base
       r@ load-size evaluate          \ Run the script
       r> r> free-mem
       EXIT
@@ -238,9 +290,9 @@ read-bootlist
 ;
 
 : netload ( -- rc ) (parse-line)
-   load-base >r FLASH-LOAD-BASE to load-base
+   load-base-override >r flash-load-base to load-base-override
    s" load net:" strdup 2swap $cat strdup evaluate
-   r> to load-base
+   r> to load-base-override
    load-size
 ;
 

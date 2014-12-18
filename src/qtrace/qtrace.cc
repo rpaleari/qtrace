@@ -12,12 +12,10 @@
 #include "qtrace/context.h"
 #include "qtrace/logging.h"
 
-#ifdef CONFIG_QTRACE_SYSCALL
-#include "qtrace/trace/manager.h"
-#include "qtrace/trace/memory.h"
-#include "qtrace/trace/serialize.h"
-#include "qtrace/trace/syscall.h"
-#include "qtrace/trace/windows.h"
+#ifdef CONFIG_QTRACE_TRACER
+#include "qtrace/profiles/guest_os.h"
+
+extern bool gbl_qtrace_tracer_enabled;
 #endif
 
 #ifdef CONFIG_QTRACE_TAINT
@@ -34,7 +32,7 @@ static bool qtrace_initialized = false;
 // The global structure accessed by the QEMU core module (vl.c) to store
 // command-line options
 struct QTraceOptions qtrace_options = {
-#ifdef CONFIG_QTRACE_SYSCALL
+#ifdef CONFIG_QTRACE_TRACER
   false,                        // trace_disabled
   NULL,                         // filename_log
   ProfileUnknown,               // profile
@@ -42,6 +40,7 @@ struct QTraceOptions qtrace_options = {
   NULL,                         // filter_syscalls
   NULL,                         // filter_process
   false,                        // track_foreign
+  false,                        // track_rep_accesses
 #endif
 #ifdef CONFIG_QTRACE_TAINT
   false,                        // taint_disabled
@@ -50,6 +49,7 @@ struct QTraceOptions qtrace_options = {
 
 int qtrace_initialize(qtrace_func_memread func_peek,
                       qtrace_func_regread func_regs,
+                      qtrace_func_msrread func_rdmsr,
                       qtrace_func_tbflush func_tbflush,
                       qtrace_func_va2phy func_va2phy) {
   DEBUG("Initalization started");
@@ -73,23 +73,23 @@ int qtrace_initialize(qtrace_func_memread func_peek,
   // Copy command-line options
   memcpy(&gbl_context.options, &qtrace_options, sizeof(gbl_context.options));
 
-#ifdef CONFIG_QTRACE_SYSCALL
+#ifdef CONFIG_QTRACE_TRACER
   // Continue with module-specific intialization
   CHECK(log_init(gbl_context.options.filename_log), "Log");
 
   // Syscall tracing setup
-  assert(func_peek && func_regs);
+  assert(func_peek && func_regs && func_rdmsr);
   gbl_context.cb_peek = func_peek;
   gbl_context.cb_regs = func_regs;
+  gbl_context.cb_rdmsr = func_rdmsr;
 
-  CHECK(windows_init(&gbl_context.windows), "Windows");
-  CHECK(serialize_init(), "Serialize");
+  CHECK(guest_os_init(&gbl_context.guest), "GuestOS");
 
   gbl_context.tracer_enabled = !gbl_context.options.trace_disabled;
-  gbl_context.trace_manager =
-    new TraceManager(gbl_context.options.track_foreign,
-                     gbl_context.options.filter_syscalls,
-                     gbl_context.options.filter_process);
+  gbl_qtrace_tracer_enabled = gbl_context.tracer_enabled;
+
+  // Plugin initialization
+  CHECK(plugin_init(&gbl_context.callbacks, &gbl_context.options), "Plugin");
 #endif
 
 #ifdef CONFIG_QTRACE_TAINT

@@ -29,6 +29,7 @@
 #include "block/block.h"
 #include "block/snapshot.h"
 
+BlockDeviceInfo *bdrv_block_device_info(BlockDriverState *bs);
 int bdrv_query_snapshot_info_list(BlockDriverState *bs,
                                   SnapshotInfoList **p_list,
                                   Error **errp);
@@ -38,10 +39,11 @@ void bdrv_query_image_info(BlockDriverState *bs,
 void bdrv_query_info(BlockDriverState *bs,
                      BlockInfo **p_info,
                      Error **errp);
-BlockStats *bdrv_query_stats(const BlockDriverState *bs);
 
 void bdrv_snapshot_dump(fprintf_function func_fprintf, void *f,
                         QEMUSnapshotInfo *sn);
+void bdrv_image_info_specific_dump(fprintf_function func_fprintf, void *f,
+                                   ImageInfoSpecific *info_spec);
 void bdrv_image_info_dump(fprintf_function func_fprintf, void *f,
                           ImageInfo *info);
 #endif

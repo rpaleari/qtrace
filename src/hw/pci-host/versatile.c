@@ -384,12 +384,12 @@ static void pci_vpb_init(Object *obj)
     memory_region_init(&s->pci_io_space, OBJECT(s), "pci_io", 1ULL << 32);
     memory_region_init(&s->pci_mem_space, OBJECT(s), "pci_mem", 1ULL << 32);
 
-    pci_bus_new_inplace(&s->pci_bus, DEVICE(obj), "pci",
+    pci_bus_new_inplace(&s->pci_bus, sizeof(s->pci_bus), DEVICE(obj), "pci",
                         &s->pci_mem_space, &s->pci_io_space,
                         PCI_DEVFN(11, 0), TYPE_PCI_BUS);
     h->bus = &s->pci_bus;
 
-    object_initialize(&s->pci_dev, TYPE_VERSATILE_PCI_HOST);
+    object_initialize(&s->pci_dev, sizeof(s->pci_dev), TYPE_VERSATILE_PCI_HOST);
     qdev_set_parent_bus(DEVICE(&s->pci_dev), BUS(&s->pci_bus));
 
     /* Window sizes for VersatilePB; realview_pci's init will override */
@@ -467,11 +467,17 @@ static int versatile_pci_host_init(PCIDevice *d)
 static void versatile_pci_host_class_init(ObjectClass *klass, void *data)
 {
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+    DeviceClass *dc = DEVICE_CLASS(klass);
 
     k->init = versatile_pci_host_init;
     k->vendor_id = PCI_VENDOR_ID_XILINX;
     k->device_id = PCI_DEVICE_ID_XILINX_XC2VP30;
     k->class_id = PCI_CLASS_PROCESSOR_CO;
+    /*
+     * PCI-facing part of the host bridge, not usable without the
+     * host-facing part, which can't be device_add'ed, yet.
+     */
+    dc->cannot_instantiate_with_device_add_yet = true;
 }
 
 static const TypeInfo versatile_pci_host_info = {

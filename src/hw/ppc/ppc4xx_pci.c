@@ -294,8 +294,7 @@ static const VMStateDescription vmstate_pci_master_map = {
     .name = "pci_master_map",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32(la, struct PCIMasterMap),
         VMSTATE_UINT32(ma, struct PCIMasterMap),
         VMSTATE_UINT32(pcila, struct PCIMasterMap),
@@ -308,8 +307,7 @@ static const VMStateDescription vmstate_pci_target_map = {
     .name = "pci_target_map",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32(ms, struct PCITargetMap),
         VMSTATE_UINT32(la, struct PCITargetMap),
         VMSTATE_END_OF_LIST()
@@ -320,8 +318,7 @@ static const VMStateDescription vmstate_ppc4xx_pci = {
     .name = "ppc4xx_pci",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_STRUCT_ARRAY(pmm, PPC4xxPCIState, PPC4xx_PCI_NR_PMMS, 1,
                              vmstate_pci_master_map,
                              struct PCIMasterMap),
@@ -380,6 +377,11 @@ static void ppc4xx_host_bridge_class_init(ObjectClass *klass, void *data)
     k->vendor_id    = PCI_VENDOR_ID_IBM;
     k->device_id    = PCI_DEVICE_ID_IBM_440GX;
     k->class_id     = PCI_CLASS_BRIDGE_OTHER;
+    /*
+     * PCI-facing part of the host bridge, not usable without the
+     * host-facing part, which can't be device_add'ed, yet.
+     */
+    dc->cannot_instantiate_with_device_add_yet = true;
 }
 
 static const TypeInfo ppc4xx_host_bridge_info = {

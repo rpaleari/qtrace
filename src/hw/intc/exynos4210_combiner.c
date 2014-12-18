@@ -77,7 +77,6 @@ static const VMStateDescription vmstate_exynos4210_combiner_group_state = {
     .name = "exynos4210.combiner.groupstate",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_UINT8(src_mask, CombinerGroupState),
         VMSTATE_UINT8(src_pending, CombinerGroupState),
@@ -89,7 +88,6 @@ static const VMStateDescription vmstate_exynos4210_combiner = {
     .name = "exynos4210.combiner",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_STRUCT_ARRAY(group, Exynos4210CombinerState, IIC_NGRP, 0,
                 vmstate_exynos4210_combiner_group_state, CombinerGroupState),
@@ -418,7 +416,7 @@ static int exynos4210_combiner_init(SysBusDevice *sbd)
     qdev_init_gpio_in(dev, exynos4210_combiner_handler, IIC_NIRQ);
 
     /* Connect SysBusDev irqs to device specific irqs */
-    for (i = 0; i < IIC_NIRQ; i++) {
+    for (i = 0; i < IIC_NGRP; i++) {
         sysbus_init_irq(sbd, &s->output_irq[i]);
     }
 

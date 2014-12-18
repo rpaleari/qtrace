@@ -17,6 +17,7 @@
 #include <udp.h>
 #include <tcp.h>
 #include <ethernet.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <string.h>
 
@@ -49,6 +50,7 @@ struct arp_entry {
 	uint8_t  mac_addr[6];
 	uint8_t  eth_frame[ETH_MTU_SIZE];
 	int      eth_len;
+	int	 pkt_pending;
 };
 
 /** \struct icmphdr
@@ -124,6 +126,7 @@ static       uint8_t multicast_mac[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 static unsigned int arp_consumer = 0;
 static unsigned int arp_producer = 0;
 static arp_entry_t  arp_table[ARP_ENTRIES];
+static arp_entry_t  pending_pkt;
 
 /* Function pointer send_ip. Points either to send_ipv4() or send_ipv6() */
 int   (*send_ip) (void *, int);
@@ -147,6 +150,7 @@ ipv4_init(void)
 		arp_table[i].ipv4_addr = 0;
 		memset(arp_table[i].mac_addr, 0, 6);
 		arp_table[i].eth_len = 0;
+		arp_table[i].pkt_pending = 0;
 	}
 
 	/* Set IP send function to send_ipv4() */ 
@@ -419,7 +423,7 @@ handle_ipv4(uint8_t * ip_packet, int32_t packetsize)
 int
 send_ipv4(void* buffer, int len)
 {
-	arp_entry_t *arp_entry;
+	arp_entry_t *arp_entry = 0;
 	struct iphdr *ip;
 	const uint8_t *mac_addr = 0;
 
@@ -493,13 +497,23 @@ send_ipv4(void* buffer, int len)
 			arp_consumer = (arp_consumer+1)%ARP_ENTRIES;
 
 		// store the packet to be send if the ARP reply is received
+		arp_entry->pkt_pending = 1;
 		arp_entry->ipv4_addr = ip->ip_dst;
 		memset(arp_entry->mac_addr, 0, 6);
-		fill_ethhdr (arp_entry->eth_frame, htons(ETHERTYPE_IP),
+		pending_pkt.ipv4_addr = ip->ip_dst;
+		memset(pending_pkt.mac_addr, 0, 6);
+		fill_ethhdr (pending_pkt.eth_frame, htons(ETHERTYPE_IP),
 		             get_mac_address(), null_mac_addr);
-		memcpy(&arp_entry->eth_frame[sizeof(struct ethhdr)],
+		memcpy(&pending_pkt.eth_frame[sizeof(struct ethhdr)],
 		       buffer, len);
-		arp_entry->eth_len = len + sizeof(struct ethhdr);
+		pending_pkt.eth_len = len + sizeof(struct ethhdr);
+
+		set_timer(TICKS_SEC);
+		do {
+			receive_ether();
+			if (!arp_entry->eth_len)
+				break;
+		} while (get_timer() > 0);
 
 		return 0;
 	}
@@ -548,6 +562,13 @@ fill_udp_checksum(struct iphdr *ipv4_hdr)
 	checksum = (checksum >> 16) + (checksum & 0xffff);
 	checksum += (checksum >> 16);
 	udp_hdr->uh_sum = ~checksum;
+
+	/* As per RFC 768, if the computed  checksum  is zero,
+	 * it is transmitted as all ones (the equivalent in
+	 * one's complement arithmetic).
+	 */
+	if (udp_hdr->uh_sum == 0)
+		udp_hdr->uh_sum = ~udp_hdr->uh_sum;
 }
 
 /**
@@ -723,11 +744,12 @@ handle_arp(uint8_t * packet, int32_t packetsize)
 		memcpy(arp_table[i].mac_addr, arph->src_mac, 6);
 
 		// do we have something to send
-		if(arp_table[i].eth_len > 0) {
-			struct ethhdr * ethh = (struct ethhdr *) arp_table[i].eth_frame;
+		if (arp_table[i].pkt_pending) {
+			struct ethhdr * ethh = (struct ethhdr *) pending_pkt.eth_frame;
 			memcpy(ethh -> dest_mac, arp_table[i].mac_addr, 6);
 
-			send_ether(arp_table[i].eth_frame, arp_table[i].eth_len);
+			send_ether(pending_pkt.eth_frame, pending_pkt.eth_len);
+			pending_pkt.pkt_pending = 0;
 			arp_table[i].eth_len = 0;
 		}
 		return 0; // no error

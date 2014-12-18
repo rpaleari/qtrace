@@ -81,8 +81,9 @@ cimod_check_and_install(void)
 static int
 cimod_init(void)
 {
+	get_mac(&ci_module.mac_addr[0]);
 	ci_module.running = 1;
-	snk_kernel_interface.print("client-interface module initialized!\n");
+	dprintf("client-interface module initialized!\n");
 	return 0;
 }
 

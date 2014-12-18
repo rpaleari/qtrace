@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "../intervals.h"
+#include "trace/intervals.h"
 
 // Check that a new intervals set is really empty
 TEST(DataIntervalSetTest, InitiallyEmpty) {
@@ -80,12 +80,12 @@ TEST(DataIntervalSetTest, ReadSuccess) {
   intervals.add(DataInterval(2, 6, "abcde"), true);
 
   int r;
-  r = intervals.read(2, sizeof(buffer)-1, 
+  r = intervals.read(2, sizeof(buffer)-1,
 		     reinterpret_cast<unsigned char*>(buffer));
   ASSERT_EQ(0, r);
   EXPECT_STREQ("abcd", buffer);
 
-  r = intervals.read(3, sizeof(buffer)-1, 
+  r = intervals.read(3, sizeof(buffer)-1,
 		     reinterpret_cast<unsigned char*>(buffer));
   ASSERT_EQ(0, r);
   EXPECT_STREQ("bcde", buffer);
@@ -102,7 +102,7 @@ TEST(DataIntervalSetTest, ReadOverwrite) {
   intervals1.add(DataInterval(4, 8, "12345"), true);
 
   int r;
-  r = intervals1.read(3, sizeof(buffer)-1, 
+  r = intervals1.read(3, sizeof(buffer)-1,
 		      reinterpret_cast<unsigned char*>(buffer));
   ASSERT_EQ(0, r);
   EXPECT_STREQ("b123", buffer);
@@ -112,7 +112,7 @@ TEST(DataIntervalSetTest, ReadOverwrite) {
   intervals2.add(DataInterval(4, 8, "12345"), true);
   intervals2.add(DataInterval(2, 6, "abcde"), true);
 
-  r = intervals2.read(4, sizeof(buffer)-1, 
+  r = intervals2.read(4, sizeof(buffer)-1,
 		      reinterpret_cast<unsigned char*>(buffer));
   ASSERT_EQ(0, r);
   EXPECT_STREQ("cde4", buffer);
@@ -129,7 +129,7 @@ TEST(DataIntervalSetTest, ReadNoOverwrite) {
   intervals1.add(DataInterval(4, 8, "12345"), false);
 
   int r;
-  r = intervals1.read(3, sizeof(buffer)-1, 
+  r = intervals1.read(3, sizeof(buffer)-1,
 		      reinterpret_cast<unsigned char*>(buffer));
   ASSERT_EQ(0, r);
   EXPECT_STREQ("bcde4", buffer);
@@ -139,7 +139,7 @@ TEST(DataIntervalSetTest, ReadNoOverwrite) {
   intervals2.add(DataInterval(4, 8, "12345"), false);
   intervals2.add(DataInterval(2, 6, "abcde"), false);
 
-  r = intervals2.read(2, sizeof(buffer)-1, 
+  r = intervals2.read(2, sizeof(buffer)-1,
 		      reinterpret_cast<unsigned char*>(buffer));
   ASSERT_EQ(0, r);
   EXPECT_STREQ("ab123", buffer);
@@ -184,7 +184,11 @@ TEST(DataIntervalSetTest, ReadFail) {
 
   intervals.add(DataInterval(2, 6, "abcde"), true);
 
-  int r = intervals.read(4, sizeof(buffer), 
+  int r = intervals.read(4, sizeof(buffer),
 			 reinterpret_cast<unsigned char*>(buffer));
+  ASSERT_NE(0, r);
+
+  r = intervals.read(0, 1,
+		     reinterpret_cast<unsigned char*>(buffer));
   ASSERT_NE(0, r);
 }

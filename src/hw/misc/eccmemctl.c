@@ -266,8 +266,7 @@ static const VMStateDescription vmstate_ecc = {
     .name ="ECC",
     .version_id = 3,
     .minimum_version_id = 3,
-    .minimum_version_id_old = 3,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(regs, ECCState, ECC_NREGS),
         VMSTATE_BUFFER(diag, ECCState),
         VMSTATE_UINT32(version, ECCState),
@@ -314,7 +313,7 @@ static int ecc_init1(SysBusDevice *dev)
 }
 
 static Property ecc_properties[] = {
-    DEFINE_PROP_HEX32("version", ECCState, version, -1),
+    DEFINE_PROP_UINT32("version", ECCState, version, -1),
     DEFINE_PROP_END_OF_LIST(),
 };
 

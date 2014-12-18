@@ -17,22 +17,42 @@
 #ifndef BYTEORDER_H
 #define BYTEORDER_H
 
+#include <stdint.h>
+
 static inline uint16_t
 bswap_16 (uint16_t x)
 {
-	return ((x&0xff00) >> 8) | ((x&0xff) << 8);
+	return __builtin_bswap16(x);
 }
 
 static inline uint32_t
 bswap_32 (uint32_t x)
 {
-	return bswap_16(x >> 16) | (bswap_16(x) << 16);
+	return __builtin_bswap32(x);
 }
 
 static inline uint64_t
 bswap_64 (uint64_t x)
 {
-	return (uint64_t) bswap_32(x >> 32) | (uint64_t) bswap_32(x) << 32;
+	return __builtin_bswap64(x);
+}
+
+static inline void
+bswap_16p (uint16_t *x)
+{
+	*x = __builtin_bswap16(*x);
+}
+
+static inline void
+bswap_32p (uint32_t *x)
+{
+	*x = __builtin_bswap32(*x);
+}
+
+static inline void
+bswap_64p (uint64_t *x)
+{
+	*x = __builtin_bswap64(*x);
 }
 
 

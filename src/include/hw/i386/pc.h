@@ -3,12 +3,69 @@
 
 #include "qemu-common.h"
 #include "exec/memory.h"
+#include "hw/boards.h"
 #include "hw/isa/isa.h"
 #include "hw/block/fdc.h"
 #include "net/net.h"
 #include "hw/i386/ioapic.h"
 
 #include "qemu/range.h"
+#include "qemu/bitmap.h"
+#include "sysemu/sysemu.h"
+#include "hw/pci/pci.h"
+#include "hw/boards.h"
+
+#define HPET_INTCAP "hpet-intcap"
+
+/**
+ * PCMachineState:
+ * @hotplug_memory_base: address in guest RAM address space where hotplug memory
+ * address space begins.
+ * @hotplug_memory: hotplug memory addess space container
+ * @acpi_dev: link to ACPI PM device that performs ACPI hotplug handling
+ */
+struct PCMachineState {
+    /*< private >*/
+    MachineState parent_obj;
+
+    /* <public> */
+    ram_addr_t hotplug_memory_base;
+    MemoryRegion hotplug_memory;
+
+    HotplugHandler *acpi_dev;
+
+    uint64_t max_ram_below_4g;
+};
+
+#define PC_MACHINE_ACPI_DEVICE_PROP "acpi-device"
+#define PC_MACHINE_MEMHP_REGION_SIZE "hotplug-memory-region-size"
+#define PC_MACHINE_MAX_RAM_BELOW_4G "max-ram-below-4g"
+
+/**
+ * PCMachineClass:
+ * @get_hotplug_handler: pointer to parent class callback @get_hotplug_handler
+ */
+struct PCMachineClass {
+    /*< private >*/
+    MachineClass parent_class;
+
+    /*< public >*/
+    HotplugHandler *(*get_hotplug_handler)(MachineState *machine,
+                                           DeviceState *dev);
+};
+
+typedef struct PCMachineState PCMachineState;
+typedef struct PCMachineClass PCMachineClass;
+
+#define TYPE_PC_MACHINE "generic-pc-machine"
+#define PC_MACHINE(obj) \
+    OBJECT_CHECK(PCMachineState, (obj), TYPE_PC_MACHINE)
+#define PC_MACHINE_GET_CLASS(obj) \
+    OBJECT_GET_CLASS(PCMachineClass, (obj), TYPE_PC_MACHINE)
+#define PC_MACHINE_CLASS(klass) \
+    OBJECT_CLASS_CHECK(PCMachineClass, (klass), TYPE_PC_MACHINE)
+
+void qemu_register_pc_machine(QEMUMachine *m);
 
 /* PC-style peripherals (also used by other machines).  */
 
@@ -17,10 +74,29 @@ typedef struct PcPciInfo {
     Range w64;
 } PcPciInfo;
 
+#define ACPI_PM_PROP_S3_DISABLED "disable_s3"
+#define ACPI_PM_PROP_S4_DISABLED "disable_s4"
+#define ACPI_PM_PROP_S4_VAL "s4_val"
+#define ACPI_PM_PROP_SCI_INT "sci_int"
+#define ACPI_PM_PROP_ACPI_ENABLE_CMD "acpi_enable_cmd"
+#define ACPI_PM_PROP_ACPI_DISABLE_CMD "acpi_disable_cmd"
+#define ACPI_PM_PROP_PM_IO_BASE "pm_io_base"
+#define ACPI_PM_PROP_GPE0_BLK "gpe0_blk"
+#define ACPI_PM_PROP_GPE0_BLK_LEN "gpe0_blk_len"
+
 struct PcGuestInfo {
     bool has_pci_info;
     bool isapc_ram_fw;
+    hwaddr ram_size, ram_size_below_4g;
+    unsigned apic_id_limit;
+    bool apic_xrupt_override;
+    uint64_t numa_nodes;
+    uint64_t *node_mem;
+    uint64_t *node_cpu;
     FWCfgState *fw_cfg;
+    int legacy_acpi_table_size;
+    bool has_acpi_build;
+    bool has_reserved_memory;
 };
 
 /* parallel.c */
@@ -106,15 +182,14 @@ PcGuestInfo *pc_guest_info_init(ram_addr_t below_4g_mem_size,
 #define PCI_HOST_PROP_PCI_HOLE64_START "pci-hole64-start"
 #define PCI_HOST_PROP_PCI_HOLE64_END   "pci-hole64-end"
 #define PCI_HOST_PROP_PCI_HOLE64_SIZE  "pci-hole64-size"
-#define DEFAULT_PCI_HOLE64_SIZE (1ULL << 31)
+#define DEFAULT_PCI_HOLE64_SIZE (~0x0ULL)
 
-void pc_init_pci64_hole(PcPciInfo *pci_info, uint64_t pci_hole64_start,
-                        uint64_t pci_hole64_size);
 
-FWCfgState *pc_memory_init(MemoryRegion *system_memory,
-                           const char *kernel_filename,
-                           const char *kernel_cmdline,
-                           const char *initrd_filename,
+void pc_pci_as_mapping_init(Object *owner, MemoryRegion *system_memory,
+                            MemoryRegion *pci_address_space);
+
+FWCfgState *pc_memory_init(MachineState *machine,
+                           MemoryRegion *system_memory,
                            ram_addr_t below_4g_mem_size,
                            ram_addr_t above_4g_mem_size,
                            MemoryRegion *rom_memory,
@@ -125,7 +200,8 @@ DeviceState *pc_vga_init(ISABus *isa_bus, PCIBus *pci_bus);
 void pc_basic_device_init(ISABus *isa_bus, qemu_irq *gsi,
                           ISADevice **rtc_state,
                           ISADevice **floppy,
-                          bool no_vmport);
+                          bool no_vmport,
+                          uint32 hpet_irqs);
 void pc_init_ne2k_isa(ISABus *bus, NICInfo *nd);
 void pc_cmos_init(ram_addr_t ram_size, ram_addr_t above_4g_mem_size,
                   const char *boot_device,
@@ -141,9 +217,10 @@ void ioapic_init_gsi(GSIState *gsi_state, const char *parent_name);
 
 /* acpi_piix.c */
 
-i2c_bus *piix4_pm_init(PCIBus *bus, int devfn, uint32_t smb_io_base,
-                       qemu_irq sci_irq, qemu_irq smi_irq,
-                       int kvm_enabled, FWCfgState *fw_cfg);
+I2CBus *piix4_pm_init(PCIBus *bus, int devfn, uint32_t smb_io_base,
+                      qemu_irq sci_irq, qemu_irq smi_irq,
+                      int kvm_enabled, FWCfgState *fw_cfg,
+                      DeviceState **piix4_pm);
 void piix4_smbus_register_device(SMBusDevice *dev, uint8_t addr);
 
 /* hpet.c */
@@ -158,12 +235,12 @@ PCIBus *i440fx_init(PCII440FXState **pi440fx_state, int *piix_devfn,
                     MemoryRegion *address_space_mem,
                     MemoryRegion *address_space_io,
                     ram_addr_t ram_size,
-                    hwaddr pci_hole_start,
-                    hwaddr pci_hole_size,
+                    ram_addr_t below_4g_mem_size,
                     ram_addr_t above_4g_mem_size,
                     MemoryRegion *pci_memory,
                     MemoryRegion *ram_memory);
 
+PCIBus *find_i440fx(void);
 /* piix4.c */
 extern PCIDevice *piix4_dev;
 int piix4_init(PCIBus *bus, ISABus **isa_bus, int devfn);
@@ -205,7 +282,7 @@ void pc_system_firmware_init(MemoryRegion *rom_memory,
                              bool isapc_ram_fw);
 
 /* pvpanic.c */
-void pvpanic_init(ISABus *bus);
+uint16_t pvpanic_port(void);
 
 /* e820 types */
 #define E820_RAM        1
@@ -215,8 +292,107 @@ void pvpanic_init(ISABus *bus);
 #define E820_UNUSABLE   5
 
 int e820_add_entry(uint64_t, uint64_t, uint32_t);
+int e820_get_num_entries(void);
+bool e820_get_entry(int, uint32_t, uint64_t *, uint64_t *);
+
+#define PC_COMPAT_2_0 \
+        {\
+            .driver   = "virtio-scsi-pci",\
+            .property = "any_layout",\
+            .value    = "off",\
+        },{\
+            .driver   = "PIIX4_PM",\
+            .property = "memory-hotplug-support",\
+            .value    = "off",\
+        },\
+        {\
+            .driver   = "apic",\
+            .property = "version",\
+            .value    = stringify(0x11),\
+        },\
+        {\
+            .driver   = "nec-usb-xhci",\
+            .property = "superspeed-ports-first",\
+            .value    = "off",\
+        },\
+        {\
+            .driver   = "pci-serial",\
+            .property = "prog_if",\
+            .value    = stringify(0),\
+        },\
+        {\
+            .driver   = "pci-serial-2x",\
+            .property = "prog_if",\
+            .value    = stringify(0),\
+        },\
+        {\
+            .driver   = "pci-serial-4x",\
+            .property = "prog_if",\
+            .value    = stringify(0),\
+        },\
+        {\
+            .driver   = "virtio-net-pci",\
+            .property = "guest_announce",\
+            .value    = "off",\
+        },\
+        {\
+            .driver   = "ICH9-LPC",\
+            .property = "memory-hotplug-support",\
+            .value    = "off",\
+        },{\
+            .driver   = "xio3130-downstream",\
+            .property = COMPAT_PROP_PCP,\
+            .value    = "off",\
+        },{\
+            .driver   = "ioh3420",\
+            .property = COMPAT_PROP_PCP,\
+            .value    = "off",\
+        }
+
+#define PC_COMPAT_1_7 \
+        PC_COMPAT_2_0, \
+        {\
+            .driver   = TYPE_USB_DEVICE,\
+            .property = "msos-desc",\
+            .value    = "no",\
+        },\
+        {\
+            .driver   = "PIIX4_PM",\
+            .property = "acpi-pci-hotplug-with-bridge-support",\
+            .value    = "off",\
+        },\
+        {\
+            .driver   = "hpet",\
+            .property = HPET_INTCAP,\
+            .value    = stringify(4),\
+        }
+
+#define PC_COMPAT_1_6 \
+        PC_COMPAT_1_7, \
+        {\
+            .driver   = "e1000",\
+            .property = "mitigation",\
+            .value    = "off",\
+        },{\
+            .driver   = "qemu64-" TYPE_X86_CPU,\
+            .property = "model",\
+            .value    = stringify(2),\
+        },{\
+            .driver   = "qemu32-" TYPE_X86_CPU,\
+            .property = "model",\
+            .value    = stringify(3),\
+        },{\
+            .driver   = "i440FX-pcihost",\
+            .property = "short_root_bus",\
+            .value    = stringify(1),\
+        },{\
+            .driver   = "q35-pcihost",\
+            .property = "short_root_bus",\
+            .value    = stringify(1),\
+        }
 
 #define PC_COMPAT_1_5 \
+        PC_COMPAT_1_6, \
         {\
             .driver   = "Conroe-" TYPE_X86_CPU,\
             .property = "model",\
@@ -249,6 +425,14 @@ int e820_add_entry(uint64_t, uint64_t, uint32_t);
             .driver = TYPE_X86_CPU,\
             .property = "pmu",\
             .value = "on",\
+        },{\
+            .driver   = "i440FX-pcihost",\
+            .property = "short_root_bus",\
+            .value    = stringify(0),\
+        },{\
+            .driver   = "q35-pcihost",\
+            .property = "short_root_bus",\
+            .value    = stringify(0),\
         }
 
 #define PC_COMPAT_1_4 \
@@ -315,5 +499,13 @@ int e820_add_entry(uint64_t, uint64_t, uint32_t);
             .property = "model",\
             .value    = stringify(0),\
         }
+
+#define PC_COMMON_MACHINE_OPTIONS \
+    .default_boot_order = "cad"
+
+#define PC_DEFAULT_MACHINE_OPTIONS \
+    PC_COMMON_MACHINE_OPTIONS, \
+    .hot_add_cpu = pc_hot_add_cpu, \
+    .max_cpus = 255
 
 #endif

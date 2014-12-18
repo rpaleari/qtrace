@@ -9,10 +9,26 @@
  */
 
 #include "s390-ccw.h"
+#include "virtio.h"
 
-struct subchannel_id blk_schid;
 char stack[PAGE_SIZE * 8] __attribute__((__aligned__(PAGE_SIZE)));
 uint64_t boot_value;
+struct subchannel_id blk_schid = { .one = 1 };
+
+/*
+ * Priniciples of Operations (SA22-7832-09) chapter 17 requires that
+ * a subsystem-identification is at 184-187 and bytes 188-191 are zero
+ * after list-directed-IPL and ccw-IPL.
+ */
+void write_subsystem_identification(void)
+{
+    struct subchannel_id *schid = (struct subchannel_id *) 184;
+    uint32_t *zeroes = (uint32_t *) 188;
+
+    *schid = blk_schid;
+    *zeroes = 0;
+}
+
 
 void virtio_panic(const char *string)
 {
@@ -29,7 +45,6 @@ static void virtio_setup(uint64_t dev_info)
     bool found = false;
     bool check_devno = false;
     uint16_t dev_no = -1;
-    blk_schid.one = 1;
 
     if (dev_info != -1) {
         check_devno = true;
@@ -65,6 +80,10 @@ static void virtio_setup(uint64_t dev_info)
     }
 
     virtio_setup_block(blk_schid);
+
+    if (!virtio_ipl_disk_is_valid()) {
+        virtio_panic("No valid hard disk detected.\n");
+    }
 }
 
 int main(void)
@@ -73,8 +92,8 @@ int main(void)
     debug_print_int("boot reg[7] ", boot_value);
     virtio_setup(boot_value);
 
-    if (zipl_load() < 0)
-        sclp_print("Failed to load OS from hard disk\n");
-    disabled_wait();
-    while (1) { }
+    zipl_load(); /* no return */
+
+    virtio_panic("Failed to load OS from hard disk\n");
+    return 0; /* make compiler happy */
 }

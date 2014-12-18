@@ -103,3 +103,23 @@ PRIM(hv_X2d_logical_X2d_memop)
 	unsigned long dst   = TOS.u;
 	TOS.u = hv_logical_memop(dst, src, esize, count, op);
 MIRP
+
+PRIM(hv_X2d_cas)
+	unsigned long size   = TOS.u; POP;
+	unsigned long buf    = TOS.u; POP;
+	unsigned long vec    = TOS.u;
+	TOS.u = hv_cas(vec, buf, size);
+MIRP
+
+PRIM(get_X2d_print_X2d_version)
+	unsigned long addr = TOS.u; POP;
+	get_print_banner(addr);
+MIRP
+
+PRIM(check_X2d_and_X2d_patch_X2d_sc1)
+	unsigned long end = TOS.u; POP;
+	unsigned long start = TOS.u; POP;
+	unsigned long patch_ins = TOS.u; POP;
+
+	patch_broken_sc1((void*)start, (void*)end, (void*)patch_ins);
+MIRP

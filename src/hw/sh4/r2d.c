@@ -219,12 +219,12 @@ static struct QEMU_PACKED
     char kernel_cmdline[256];
 } boot_params;
 
-static void r2d_init(QEMUMachineInitArgs *args)
+static void r2d_init(MachineState *machine)
 {
-    const char *cpu_model = args->cpu_model;
-    const char *kernel_filename = args->kernel_filename;
-    const char *kernel_cmdline = args->kernel_cmdline;
-    const char *initrd_filename = args->initrd_filename;
+    const char *cpu_model = machine->cpu_model;
+    const char *kernel_filename = machine->kernel_filename;
+    const char *kernel_cmdline = machine->kernel_cmdline;
+    const char *initrd_filename = machine->initrd_filename;
     SuperHCPU *cpu;
     CPUSH4State *env;
     ResetData *reset_info;
@@ -318,8 +318,8 @@ static void r2d_init(QEMUMachineInitArgs *args)
         }
 
         /* initialization which should be done by firmware */
-        stl_phys(SH7750_BCR1, 1<<3); /* cs3 SDRAM */
-        stw_phys(SH7750_BCR2, 3<<(3*2)); /* cs3 32bit */
+        stl_phys(&address_space_memory, SH7750_BCR1, 1<<3); /* cs3 SDRAM */
+        stw_phys(&address_space_memory, SH7750_BCR2, 3<<(3*2)); /* cs3 32bit */
         reset_info->vector = (SDRAM_BASE + LINUX_LOAD_OFFSET) | 0xa0000000; /* Start from P2 area */
     }
 
@@ -356,7 +356,6 @@ static QEMUMachine r2d_machine = {
     .name = "r2d",
     .desc = "r2d-plus board",
     .init = r2d_init,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void r2d_machine_init(void)

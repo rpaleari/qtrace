@@ -26,6 +26,15 @@
 #define SNAPSHOT_H
 
 #include "qemu-common.h"
+#include "qapi/error.h"
+#include "qemu/option.h"
+
+
+#define SNAPSHOT_OPT_BASE       "snapshot."
+#define SNAPSHOT_OPT_ID         "snapshot.id"
+#define SNAPSHOT_OPT_NAME       "snapshot.name"
+
+extern QemuOptsList internal_snapshot_opts;
 
 typedef struct QEMUSnapshotInfo {
     char id_str[128]; /* unique snapshot id */
@@ -40,14 +49,30 @@ typedef struct QEMUSnapshotInfo {
 
 int bdrv_snapshot_find(BlockDriverState *bs, QEMUSnapshotInfo *sn_info,
                        const char *name);
+bool bdrv_snapshot_find_by_id_and_name(BlockDriverState *bs,
+                                       const char *id,
+                                       const char *name,
+                                       QEMUSnapshotInfo *sn_info,
+                                       Error **errp);
 int bdrv_can_snapshot(BlockDriverState *bs);
 int bdrv_snapshot_create(BlockDriverState *bs,
                          QEMUSnapshotInfo *sn_info);
 int bdrv_snapshot_goto(BlockDriverState *bs,
                        const char *snapshot_id);
-int bdrv_snapshot_delete(BlockDriverState *bs, const char *snapshot_id);
+int bdrv_snapshot_delete(BlockDriverState *bs,
+                         const char *snapshot_id,
+                         const char *name,
+                         Error **errp);
+void bdrv_snapshot_delete_by_id_or_name(BlockDriverState *bs,
+                                        const char *id_or_name,
+                                        Error **errp);
 int bdrv_snapshot_list(BlockDriverState *bs,
                        QEMUSnapshotInfo **psn_info);
 int bdrv_snapshot_load_tmp(BlockDriverState *bs,
-                           const char *snapshot_name);
+                           const char *snapshot_id,
+                           const char *name,
+                           Error **errp);
+int bdrv_snapshot_load_tmp_by_id_or_name(BlockDriverState *bs,
+                                         const char *id_or_name,
+                                         Error **errp);
 #endif

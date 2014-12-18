@@ -33,19 +33,28 @@ static int
 elf_check_file(unsigned long *file_addr)
 {
 	struct ehdr *ehdr = (struct ehdr *) file_addr;
+	uint8_t native_endian;
+
 	/* check if it is an ELF image at all */
 	if (cpu_to_be32(ehdr->ei_ident) != 0x7f454c46)
 		return -1;
 
-	/* endian check */
 #ifdef __BIG_ENDIAN__
-	if (ehdr->ei_data != 2)
-		/* not a big endian image */
+	native_endian = ELFDATA2MSB;
 #else
-	if (ehdr->ei_data == 2)
-		/* not a little endian image */
+	native_endian = ELFDATA2LSB;
 #endif
-		return -2;
+
+	if (native_endian != ehdr->ei_data) {
+		switch (ehdr->ei_class) {
+		case 1:
+			elf_byteswap_header32(file_addr);
+			break;
+		case 2:
+			elf_byteswap_header64(file_addr);
+			break;
+		}
+	}
 
 	/* check if it is an ELF executable ... and also
 	 * allow DYN files, since this is specified by ePAPR */
@@ -71,7 +80,10 @@ elf_check_file(unsigned long *file_addr)
  * @param pre_load   handler that is called before copying a segment
  * @param post_load  handler that is called after copying a segment
  * @return           1 for a 32 bit file
- *                   2 for a 64 bit file
+ *                   2 for a 64 bit BE file
+ *                   3 for a 64 bit LE ABIv1 file
+ *                   4 for a 64 bit LE ABIv2 file
+ *                   5 for a 32 bit LE ABIv1 file
  *                   anything else means an error during load
  */
 int
@@ -80,15 +92,28 @@ elf_load_file(void *file_addr, unsigned long *entry,
               void (*post_load)(void*, long))
 {
 	int type = elf_check_file(file_addr);
+	struct ehdr *ehdr = (struct ehdr *) file_addr;
 
 	switch (type) {
 	case 1:
 		*entry = elf_load_segments32(file_addr, 0, pre_load, post_load);
+		if (ehdr->ei_data != ELFDATA2MSB) {
+			type = 5; /* LE32 ABIv1 */
+		}
 		break;
 	case 2:
 		*entry = elf_load_segments64(file_addr, 0, pre_load, post_load);
+		if (ehdr->ei_data != ELFDATA2MSB) {
+			uint32_t flags = elf_get_eflags_64(file_addr);
+			if ((flags & 0x3) == 2)
+				type = 4; /* LE64 ABIv2 */
+			else
+				type = 3; /* LE64 ABIv1 */
+		}
 		break;
 	}
+	if (*entry == 0)
+		type = 0;
 
 	return type;
 }

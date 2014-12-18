@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
-#include "../syscall.h"
-#include "../intervals.h"
+#include "trace/syscall.h"
+#include "trace/intervals.h"
 
 class SyscallTest : public testing::Test {
 protected:
@@ -13,11 +13,11 @@ protected:
     syscall_.addArgument(arg);
   }
 
-  Syscall syscall_;
+  Syscall syscall_(0, 0, 0, 0);
 };
 
 TEST_F(SyscallTest, InitiallyEmpty) {
-  Syscall emptysyscall;
+  Syscall emptysyscall(0, 0, 0, 0);
   EXPECT_EQ(0, emptysyscall.args.size());
 }
 
@@ -52,12 +52,12 @@ TEST_F(SyscallTest, ForeignCandidate) {
   // Add a foreign candidate pointer
   syscall_.addForeignCandidate(0xdeadbeef, 0x41424344, 0xbadbabe);
   EXPECT_TRUE(syscall_.hasForeignCandidate(0x41424344));
-  EXPECT_EQ(0, syscall_.foreign_pointers.size());
+  EXPECT_EQ(0, syscall_.foreign_ptrs.size());
 
   // Actualize the foreign candidate pointer
   syscall_.actualizeForeignCandidate(0x41424344);
   EXPECT_FALSE(syscall_.hasForeignCandidate(0x41424344));
-  EXPECT_EQ(1, syscall_.foreign_pointers.size());
+  EXPECT_EQ(1, syscall_.foreign_ptrs.size());
 }
 
 TEST_F(SyscallTest, ForeignCleanup) {
@@ -69,10 +69,10 @@ TEST_F(SyscallTest, ForeignCleanup) {
   // Add an actualized foreign data pointer with the same value
   syscall_.addForeignCandidate(0xcafebabe, 0xdeadbeef, 0x0badbabe);
   syscall_.actualizeForeignCandidate(0xdeadbeef);
-  EXPECT_EQ(1, syscall_.foreign_pointers.size());
+  EXPECT_EQ(1, syscall_.foreign_ptrs.size());
 
   // Trigger foreign pointers cleanup
   syscall_.cleanupForeignPointers();
-  EXPECT_EQ(0, syscall_.foreign_pointers.size());
+  EXPECT_EQ(0, syscall_.foreign_ptrs.size());
   EXPECT_EQ(1, syscall_.args[0]->ptrs.size());
 }

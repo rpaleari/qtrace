@@ -31,7 +31,7 @@ wordlist CONSTANT envvars
    2 c, align dup , here swap dup allot move
    DOES> char+ aligned dup @ >r cell+ r>
 ;
-: env-string  ( str len -- )  3 c, string, DOES> char+ count ;
+: env-string  ( str len -- )  3 c, align dup , here over allot swap move DOES> char+ aligned dup @ >r cell+ r> ;
 : env-flag    ( f -- )  4 c, c, DOES> char+ c@ 0<> ;
 : env-secmode ( sm -- )  5 c, c, DOES> char+ c@ ;
 
@@ -67,7 +67,8 @@ wordlist CONSTANT envvars
 ;
 
 : test-int ( param len -- true | false )
-  drop c@ isdigit if true else false then ;
+  $dh-number IF false ELSE drop true THEN
+;
 
 : findtype ( param len name len -- param len name len type )
    2dup findenv                         \ try to find type of envvar
@@ -103,7 +104,7 @@ wordlist CONSTANT envvars
    findtype
    -rot $CREATE
    CASE
-      1 OF evaluate env-int ENDOF \ XXX: wants decimal and 0x...
+      1 OF $dh-number IF 0 THEN env-int ENDOF \ XXX: wants decimal and 0x...
       2 OF env-bytes ENDOF
       3 OF env-string ENDOF
       4 OF evaluate env-flag ENDOF
@@ -116,7 +117,7 @@ wordlist CONSTANT envvars
    CASE
    1 OF aligned @ . ENDOF
    2 OF aligned dup cell+ swap @ swap . . ENDOF
-   3 OF count type ENDOF
+   3 OF aligned dup @ >r cell+ r> type ENDOF
    4 OF c@ IF ." true" ELSE ." false" THEN ENDOF
    5 OF c@ . ENDOF \ XXX: print symbolically
    ENDCASE
@@ -201,9 +202,9 @@ VARIABLE nvoff \ offset in envvar partition
 
 : (nvupdate-one) ( adr type -- "value" )
    CASE
-   1 OF aligned @ (.) ENDOF
+   1 OF aligned @ (.d) ENDOF
    2 OF drop 0 0 ENDOF
-   3 OF count ENDOF
+   3 OF aligned dup @ >r cell+ r> ENDOF
    4 OF c@ IF s" true" ELSE s" false" THEN ENDOF
    5 OF c@ (.) ENDOF \ XXX: print symbolically
    ENDCASE

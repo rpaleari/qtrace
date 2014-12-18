@@ -768,9 +768,9 @@ static void complete (SB16State *s)
                 }
                 else {
                     if (s->aux_ts) {
-                        qemu_mod_timer (
+                        timer_mod (
                             s->aux_ts,
-                            qemu_get_clock_ns (vm_clock) + ticks
+                            qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + ticks
                             );
                     }
                 }
@@ -1289,9 +1289,8 @@ static const VMStateDescription vmstate_sb16 = {
     .name = "sb16",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .post_load = sb16_post_load,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32 (irq, SB16State),
         VMSTATE_UINT32 (dma, SB16State),
         VMSTATE_UINT32 (hdma, SB16State),
@@ -1378,7 +1377,7 @@ static void sb16_realizefn (DeviceState *dev, Error **errp)
     s->csp_regs[9] = 0xf8;
 
     reset_mixer (s);
-    s->aux_ts = qemu_new_timer_ns (vm_clock, aux_timer, s);
+    s->aux_ts = timer_new_ns(QEMU_CLOCK_VIRTUAL, aux_timer, s);
     if (!s->aux_ts) {
         dolog ("warning: Could not create auxiliary timer\n");
     }
@@ -1399,8 +1398,8 @@ static int SB16_init (ISABus *bus)
 }
 
 static Property sb16_properties[] = {
-    DEFINE_PROP_HEX32  ("version", SB16State, ver,  0x0405), /* 4.5 */
-    DEFINE_PROP_HEX32  ("iobase",  SB16State, port, 0x220),
+    DEFINE_PROP_UINT32 ("version", SB16State, ver,  0x0405), /* 4.5 */
+    DEFINE_PROP_UINT32 ("iobase",  SB16State, port, 0x220),
     DEFINE_PROP_UINT32 ("irq",     SB16State, irq,  5),
     DEFINE_PROP_UINT32 ("dma",     SB16State, dma,  1),
     DEFINE_PROP_UINT32 ("dma16",   SB16State, hdma, 5),

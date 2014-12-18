@@ -672,8 +672,7 @@ static const VMStateDescription vmstate_fdrive_media_changed = {
     .name = "fdrive/media_changed",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8(media_changed, FDrive),
         VMSTATE_END_OF_LIST()
     }
@@ -690,8 +689,7 @@ static const VMStateDescription vmstate_fdrive_media_rate = {
     .name = "fdrive/media_rate",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8(media_rate, FDrive),
         VMSTATE_END_OF_LIST()
     }
@@ -701,8 +699,7 @@ static const VMStateDescription vmstate_fdrive = {
     .name = "fdrive",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8(head, FDrive),
         VMSTATE_UINT8(track, FDrive),
         VMSTATE_UINT8(sect, FDrive),
@@ -741,10 +738,9 @@ static const VMStateDescription vmstate_fdc = {
     .name = "fdc",
     .version_id = 2,
     .minimum_version_id = 2,
-    .minimum_version_id_old = 2,
     .pre_save = fdc_pre_save,
     .post_load = fdc_post_load,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         /* Controller State */
         VMSTATE_UINT8(sra, FDCtrl),
         VMSTATE_UINT8(srb, FDCtrl),
@@ -1647,8 +1643,8 @@ static void fdctrl_handle_readid(FDCtrl *fdctrl, int direction)
     FDrive *cur_drv = get_cur_drv(fdctrl);
 
     cur_drv->head = (fdctrl->fifo[1] >> 2) & 1;
-    qemu_mod_timer(fdctrl->result_timer,
-                   qemu_get_clock_ns(vm_clock) + (get_ticks_per_sec() / 50));
+    timer_mod(fdctrl->result_timer,
+                   qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + (get_ticks_per_sec() / 50));
 }
 
 static void fdctrl_handle_format_track(FDCtrl *fdctrl, int direction)
@@ -2108,7 +2104,7 @@ static void fdctrl_realize_common(FDCtrl *fdctrl, Error **errp)
     FLOPPY_DPRINTF("init controller\n");
     fdctrl->fifo = qemu_memalign(512, FD_SECTOR_LEN);
     fdctrl->fifo_size = 512;
-    fdctrl->result_timer = qemu_new_timer_ns(vm_clock,
+    fdctrl->result_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
                                              fdctrl_result_timer, fdctrl);
 
     fdctrl->version = 0x90; /* Intel 82078 controller */
@@ -2209,14 +2205,14 @@ static const VMStateDescription vmstate_isa_fdc ={
     .name = "fdc",
     .version_id = 2,
     .minimum_version_id = 2,
-    .fields = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_STRUCT(state, FDCtrlISABus, 0, vmstate_fdc, FDCtrl),
         VMSTATE_END_OF_LIST()
     }
 };
 
 static Property isa_fdc_properties[] = {
-    DEFINE_PROP_HEX32("iobase", FDCtrlISABus, iobase, 0x3f0),
+    DEFINE_PROP_UINT32("iobase", FDCtrlISABus, iobase, 0x3f0),
     DEFINE_PROP_UINT32("irq", FDCtrlISABus, irq, 6),
     DEFINE_PROP_UINT32("dma", FDCtrlISABus, dma, 2),
     DEFINE_PROP_DRIVE("driveA", FDCtrlISABus, state.drives[0].bs),
@@ -2234,7 +2230,6 @@ static void isabus_fdc_class_init(ObjectClass *klass, void *data)
 
     dc->realize = isabus_fdc_realize;
     dc->fw_name = "fdc";
-    dc->no_user = 1;
     dc->reset = fdctrl_external_reset_isa;
     dc->vmsd = &vmstate_isa_fdc;
     dc->props = isa_fdc_properties;
@@ -2252,7 +2247,7 @@ static const VMStateDescription vmstate_sysbus_fdc ={
     .name = "fdc",
     .version_id = 2,
     .minimum_version_id = 2,
-    .fields = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_STRUCT(state, FDCtrlSysBus, 0, vmstate_fdc, FDCtrl),
         VMSTATE_END_OF_LIST()
     }

@@ -5,19 +5,25 @@
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
-#include "disk.h" // struct ata_s
 #include "biosvar.h" // GET_GLOBAL
-#include "cmos.h" // inb_cmos
-#include "util.h" // dprintf
-#include "ata.h" // process_ata_op
-#include "ahci.h" // process_ahci_op
-#include "virtio-blk.h" // process_virtio_blk_op
-#include "blockcmd.h" // cdb_*
+#include "block.h" // process_op
+#include "bregs.h" // struct bregs
+#include "hw/ata.h" // process_ata_op
+#include "hw/ahci.h" // process_ahci_op
+#include "hw/blockcmd.h" // cdb_*
+#include "hw/rtc.h" // rtc_read
+#include "hw/virtio-blk.h" // process_virtio_blk_op
+#include "malloc.h" // malloc_low
+#include "output.h" // dprintf
+#include "stacks.h" // stack_hop
+#include "std/disk.h" // struct dpte_s
+#include "string.h" // checksum
+#include "util.h" // process_floppy_op
 
-u8 FloppyCount VAR16VISIBLE;
+u8 FloppyCount VARFSEG;
 u8 CDCount;
-struct drive_s *IDMap[3][CONFIG_MAX_EXTDRIVE] VAR16VISIBLE;
-u8 *bounce_buf_fl VAR16VISIBLE;
+struct drive_s *IDMap[3][BUILD_MAX_EXTDRIVE] VARFSEG;
+u8 *bounce_buf_fl VARFSEG;
 struct dpte_s DefaultDPTE VARLOW;
 
 struct drive_s *
@@ -25,22 +31,20 @@ getDrive(u8 exttype, u8 extdriveoffset)
 {
     if (extdriveoffset >= ARRAY_SIZE(IDMap[0]))
         return NULL;
-    struct drive_s *drive_gf = GET_GLOBAL(IDMap[exttype][extdriveoffset]);
-    if (!drive_gf)
-        return NULL;
-    return GLOBALFLAT2GLOBAL(drive_gf);
+    return GET_GLOBAL(IDMap[exttype][extdriveoffset]);
 }
 
-int getDriveId(u8 exttype, struct drive_s *drive_g)
+int getDriveId(u8 exttype, struct drive_s *drive)
 {
+    ASSERT32FLAT();
     int i;
     for (i = 0; i < ARRAY_SIZE(IDMap[0]); i++)
-        if (getDrive(exttype, i) == drive_g)
+        if (getDrive(exttype, i) == drive)
             return i;
     return -1;
 }
 
-int bounce_buf_init(void)
+int create_bounce_buf(void)
 {
     if (bounce_buf_fl)
         return 0;
@@ -59,24 +63,24 @@ int bounce_buf_init(void)
  ****************************************************************/
 
 static u8
-get_translation(struct drive_s *drive_g)
+get_translation(struct drive_s *drive)
 {
-    u8 type = GET_GLOBAL(drive_g->type);
-    if (! CONFIG_COREBOOT && type == DTYPE_ATA) {
+    u8 type = drive->type;
+    if (CONFIG_QEMU && type == DTYPE_ATA) {
         // Emulators pass in the translation info via nvram.
-        u8 ataid = GET_GLOBAL(drive_g->cntl_id);
+        u8 ataid = drive->cntl_id;
         u8 channel = ataid / 2;
-        u8 translation = inb_cmos(CMOS_BIOS_DISKTRANSFLAG + channel/2);
+        u8 translation = rtc_read(CMOS_BIOS_DISKTRANSFLAG + channel/2);
         translation >>= 2 * (ataid % 4);
         translation &= 0x03;
         return translation;
     }
 
     // Otherwise use a heuristic to determine translation type.
-    u16 heads = GET_GLOBAL(drive_g->pchs.heads);
-    u16 cylinders = GET_GLOBAL(drive_g->pchs.cylinders);
-    u16 spt = GET_GLOBAL(drive_g->pchs.spt);
-    u64 sectors = GET_GLOBAL(drive_g->sectors);
+    u16 heads = drive->pchs.head;
+    u16 cylinders = drive->pchs.cylinder;
+    u16 spt = drive->pchs.sector;
+    u64 sectors = drive->sectors;
     u64 psectors = (u64)heads * cylinders * spt;
     if (!heads || !cylinders || !spt || psectors > sectors)
         // pchs doesn't look valid - use LBA.
@@ -90,15 +94,15 @@ get_translation(struct drive_s *drive_g)
 }
 
 static void
-setup_translation(struct drive_s *drive_g)
+setup_translation(struct drive_s *drive)
 {
-    u8 translation = get_translation(drive_g);
-    SET_GLOBAL(drive_g->translation, translation);
+    u8 translation = get_translation(drive);
+    drive->translation = translation;
 
-    u16 heads = GET_GLOBAL(drive_g->pchs.heads);
-    u16 cylinders = GET_GLOBAL(drive_g->pchs.cylinders);
-    u16 spt = GET_GLOBAL(drive_g->pchs.spt);
-    u64 sectors = GET_GLOBAL(drive_g->sectors);
+    u16 heads = drive->pchs.head ;
+    u16 cylinders = drive->pchs.cylinder;
+    u16 spt = drive->pchs.sector;
+    u64 sectors = drive->sectors;
     const char *desc = NULL;
 
     switch (translation) {
@@ -155,15 +159,15 @@ setup_translation(struct drive_s *drive_g)
     if (cylinders > 1024)
         cylinders = 1024;
     dprintf(1, "drive %p: PCHS=%u/%d/%d translation=%s LCHS=%d/%d/%d s=%d\n"
-            , drive_g
-            , drive_g->pchs.cylinders, drive_g->pchs.heads, drive_g->pchs.spt
+            , drive
+            , drive->pchs.cylinder, drive->pchs.head, drive->pchs.sector
             , desc
             , cylinders, heads, spt
             , (u32)sectors);
 
-    SET_GLOBAL(drive_g->lchs.heads, heads);
-    SET_GLOBAL(drive_g->lchs.cylinders, cylinders);
-    SET_GLOBAL(drive_g->lchs.spt, spt);
+    drive->lchs.head = heads;
+    drive->lchs.cylinder = cylinders;
+    drive->lchs.sector = spt;
 }
 
 
@@ -173,18 +177,18 @@ setup_translation(struct drive_s *drive_g)
 
 // Fill in Fixed Disk Parameter Table (located in ebda).
 static void
-fill_fdpt(struct drive_s *drive_g, int hdid)
+fill_fdpt(struct drive_s *drive, int hdid)
 {
     if (hdid > 1)
         return;
 
-    u16 nlc   = GET_GLOBAL(drive_g->lchs.cylinders);
-    u16 nlh   = GET_GLOBAL(drive_g->lchs.heads);
-    u16 nlspt = GET_GLOBAL(drive_g->lchs.spt);
+    u16 nlc = drive->lchs.cylinder;
+    u16 nlh = drive->lchs.head;
+    u16 nls = drive->lchs.sector;
 
-    u16 npc   = GET_GLOBAL(drive_g->pchs.cylinders);
-    u16 nph   = GET_GLOBAL(drive_g->pchs.heads);
-    u16 npspt = GET_GLOBAL(drive_g->pchs.spt);
+    u16 npc = drive->pchs.cylinder;
+    u16 nph = drive->pchs.head;
+    u16 nps = drive->pchs.sector;
 
     struct fdpt_s *fdpt = &get_ebda_ptr()->fdpt[hdid];
     fdpt->precompensation = 0xffff;
@@ -192,16 +196,16 @@ fill_fdpt(struct drive_s *drive_g, int hdid)
     fdpt->landing_zone = npc;
     fdpt->cylinders = nlc;
     fdpt->heads = nlh;
-    fdpt->sectors = nlspt;
+    fdpt->sectors = nls;
 
-    if (nlc != npc || nlh != nph || nlspt != npspt) {
+    if (nlc != npc || nlh != nph || nls != nps) {
         // Logical mapping present - use extended structure.
 
         // complies with Phoenix style Translated Fixed Disk Parameter
         // Table (FDPT)
         fdpt->phys_cylinders = npc;
         fdpt->phys_heads = nph;
-        fdpt->phys_sectors = npspt;
+        fdpt->phys_sectors = nps;
         fdpt->a0h_signature = 0xa0;
 
         // Checksum structure.
@@ -218,47 +222,49 @@ fill_fdpt(struct drive_s *drive_g, int hdid)
 
 // Find spot to add a drive
 static void
-add_drive(struct drive_s **idmap, u8 *count, struct drive_s *drive_g)
+add_drive(struct drive_s **idmap, u8 *count, struct drive_s *drive)
 {
     if (*count >= ARRAY_SIZE(IDMap[0])) {
         warn_noalloc();
         return;
     }
-    idmap[*count] = drive_g;
+    idmap[*count] = drive;
     *count = *count + 1;
 }
 
 // Map a hard drive
 void
-map_hd_drive(struct drive_s *drive_g)
+map_hd_drive(struct drive_s *drive)
 {
     ASSERT32FLAT();
     struct bios_data_area_s *bda = MAKE_FLATPTR(SEG_BDA, 0);
     int hdid = bda->hdcount;
-    dprintf(3, "Mapping hd drive %p to %d\n", drive_g, hdid);
-    add_drive(IDMap[EXTTYPE_HD], &bda->hdcount, drive_g);
+    dprintf(3, "Mapping hd drive %p to %d\n", drive, hdid);
+    add_drive(IDMap[EXTTYPE_HD], &bda->hdcount, drive);
 
     // Setup disk geometry translation.
-    setup_translation(drive_g);
+    setup_translation(drive);
 
     // Fill "fdpt" structure.
-    fill_fdpt(drive_g, hdid);
+    fill_fdpt(drive, hdid);
 }
 
 // Map a cd
 void
-map_cd_drive(struct drive_s *drive_g)
+map_cd_drive(struct drive_s *drive)
 {
-    dprintf(3, "Mapping cd drive %p\n", drive_g);
-    add_drive(IDMap[EXTTYPE_CD], &CDCount, drive_g);
+    ASSERT32FLAT();
+    dprintf(3, "Mapping cd drive %p\n", drive);
+    add_drive(IDMap[EXTTYPE_CD], &CDCount, drive);
 }
 
 // Map a floppy
 void
-map_floppy_drive(struct drive_s *drive_g)
+map_floppy_drive(struct drive_s *drive)
 {
-    dprintf(3, "Mapping floppy drive %p\n", drive_g);
-    add_drive(IDMap[EXTTYPE_FLOPPY], &FloppyCount, drive_g);
+    ASSERT32FLAT();
+    dprintf(3, "Mapping floppy drive %p\n", drive);
+    add_drive(IDMap[EXTTYPE_FLOPPY], &FloppyCount, drive);
 
     // Update equipment word bits for floppy
     if (FloppyCount == 1) {
@@ -274,10 +280,40 @@ map_floppy_drive(struct drive_s *drive_g)
 
 
 /****************************************************************
+ * Return status functions
+ ****************************************************************/
+
+void
+__disk_ret(struct bregs *regs, u32 linecode, const char *fname)
+{
+    u8 code = linecode;
+    if (regs->dl < EXTSTART_HD)
+        SET_BDA(floppy_last_status, code);
+    else
+        SET_BDA(disk_last_status, code);
+    if (code)
+        __set_code_invalid(regs, linecode, fname);
+    else
+        set_code_success(regs);
+}
+
+void
+__disk_ret_unimplemented(struct bregs *regs, u32 linecode, const char *fname)
+{
+    u8 code = linecode;
+    if (regs->dl < EXTSTART_HD)
+        SET_BDA(floppy_last_status, code);
+    else
+        SET_BDA(disk_last_status, code);
+    __set_code_unimplemented(regs, linecode, fname);
+}
+
+
+/****************************************************************
  * 16bit calling interface
  ****************************************************************/
 
-static int
+int VISIBLE32FLAT
 process_scsi_op(struct disk_op_s *op)
 {
     switch (op->command) {
@@ -292,12 +328,11 @@ process_scsi_op(struct disk_op_s *op)
     case CMD_SEEK:
         return DISK_RET_SUCCESS;
     default:
-        op->count = 0;
         return DISK_RET_EPARAM;
     }
 }
 
-static int
+int VISIBLE32FLAT
 process_atapi_op(struct disk_op_s *op)
 {
     switch (op->command) {
@@ -314,34 +349,60 @@ int
 process_op(struct disk_op_s *op)
 {
     ASSERT16();
-    u8 type = GET_GLOBAL(op->drive_g->type);
+    int ret, origcount = op->count;
+    u8 type = GET_GLOBALFLAT(op->drive_gf->type);
     switch (type) {
     case DTYPE_FLOPPY:
-        return process_floppy_op(op);
+        ret = process_floppy_op(op);
+        break;
     case DTYPE_ATA:
-        return process_ata_op(op);
+        ret = process_ata_op(op);
+        break;
     case DTYPE_RAMDISK:
-        return process_ramdisk_op(op);
+        ret = process_ramdisk_op(op);
+        break;
     case DTYPE_CDEMU:
-        return process_cdemu_op(op);
+        ret = process_cdemu_op(op);
+        break;
     case DTYPE_VIRTIO_BLK:
-        return process_virtio_blk_op(op);
-    case DTYPE_AHCI:
-        return process_ahci_op(op);
+        ret = process_virtio_blk_op(op);
+        break;
+    case DTYPE_AHCI: ;
+        extern void _cfunc32flat_process_ahci_op(void);
+        ret = call32(_cfunc32flat_process_ahci_op
+                     , (u32)MAKE_FLATPTR(GET_SEG(SS), op), DISK_RET_EPARAM);
+        break;
     case DTYPE_ATA_ATAPI:
-    case DTYPE_AHCI_ATAPI:
-        return process_atapi_op(op);
+        ret = process_atapi_op(op);
+        break;
+    case DTYPE_AHCI_ATAPI: ;
+        extern void _cfunc32flat_process_atapi_op(void);
+        ret = call32(_cfunc32flat_process_atapi_op
+                     , (u32)MAKE_FLATPTR(GET_SEG(SS), op), DISK_RET_EPARAM);
+        break;
     case DTYPE_USB:
     case DTYPE_UAS:
     case DTYPE_VIRTIO_SCSI:
     case DTYPE_LSI_SCSI:
     case DTYPE_ESP_SCSI:
     case DTYPE_MEGASAS:
-        return process_scsi_op(op);
+        ret = process_scsi_op(op);
+        break;
+    case DTYPE_USB_32:
+    case DTYPE_UAS_32:
+    case DTYPE_PVSCSI: ;
+        extern void _cfunc32flat_process_scsi_op(void);
+        ret = call32(_cfunc32flat_process_scsi_op
+                     , (u32)MAKE_FLATPTR(GET_SEG(SS), op), DISK_RET_EPARAM);
+        break;
     default:
-        op->count = 0;
-        return DISK_RET_EPARAM;
+        ret = DISK_RET_EPARAM;
+        break;
     }
+    if (ret && op->count == origcount)
+        // If the count hasn't changed on error, assume no data transferred.
+        op->count = 0;
+    return ret;
 }
 
 // Execute a "disk_op_s" request - this runs on the extra stack.
@@ -354,7 +415,7 @@ __send_disk_op(struct disk_op_s *op_far, u16 op_seg)
                , sizeof(dop));
 
     dprintf(DEBUG_HDL_13, "disk_op d=%p lba=%d buf=%p count=%d cmd=%d\n"
-            , dop.drive_g, (u32)dop.lba, dop.buf_fl
+            , dop.drive_gf, (u32)dop.lba, dop.buf_fl
             , dop.count, dop.command);
 
     int status = process_op(&dop);

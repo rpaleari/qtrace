@@ -75,7 +75,7 @@ void lm32_juart_set_jtx(DeviceState *d, uint32_t jtx)
 
     s->jtx = jtx;
     if (s->chr) {
-        qemu_chr_fe_write(s->chr, &ch, 1);
+        qemu_chr_fe_write_all(s->chr, &ch, 1);
     }
 }
 
@@ -129,8 +129,7 @@ static const VMStateDescription vmstate_lm32_juart = {
     .name = "lm32-juart",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32(jtx, LM32JuartState),
         VMSTATE_UINT32(jrx, LM32JuartState),
         VMSTATE_END_OF_LIST()

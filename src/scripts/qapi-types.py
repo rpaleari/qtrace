@@ -6,8 +6,8 @@
 # Authors:
 #  Anthony Liguori <aliguori@us.ibm.com>
 #
-# This work is licensed under the terms of the GNU GPLv2.
-# See the COPYING.LIB file in the top-level directory.
+# This work is licensed under the terms of the GNU GPL, version 2.
+# See the COPYING file in the top-level directory.
 
 from ordereddict import OrderedDict
 from qapi import *
@@ -51,18 +51,17 @@ def generate_fwd_enum_struct(name, members):
     return mcgen('''
 typedef struct %(name)sList
 {
-    %(name)s value;
+    union {
+        %(name)s value;
+        uint64_t padding;
+    };
     struct %(name)sList *next;
 } %(name)sList;
 ''',
                  name=name)
 
-def generate_struct(structname, fieldname, members):
-    ret = mcgen('''
-struct %(name)s
-{
-''',
-          name=structname)
+def generate_struct_fields(members):
+    ret = ''
 
     for argname, argentry, optional, structured in parse_args(members):
         if optional:
@@ -72,13 +71,33 @@ struct %(name)s
                          c_name=c_var(argname))
         if structured:
             push_indent()
-            ret += generate_struct("", argname, argentry)
+            ret += generate_struct({ "field": argname, "data": argentry})
             pop_indent()
         else:
             ret += mcgen('''
     %(c_type)s %(c_name)s;
 ''',
                      c_type=c_type(argentry), c_name=c_var(argname))
+
+    return ret
+
+def generate_struct(expr):
+
+    structname = expr.get('type', "")
+    fieldname = expr.get('field', "")
+    members = expr['data']
+    base = expr.get('base')
+
+    ret = mcgen('''
+struct %(name)s
+{
+''',
+          name=structname)
+
+    if base:
+        ret += generate_struct_fields({'base': base})
+
+    ret += generate_struct_fields(members)
 
     if len(fieldname):
         fieldname = " " + fieldname
@@ -108,16 +127,6 @@ const char *%(name)s_lookup[] = {
 ''')
     return ret
 
-def generate_enum_name(name):
-    if name.isupper():
-        return c_fun(name, False)
-    new_name = ''
-    for c in c_fun(name, False):
-        if c.isupper():
-            new_name += '_'
-        new_name += c
-    return new_name.lstrip('_').upper()
-
 def generate_enum(name, values):
     lookup_decl = mcgen('''
 extern const char *%(name)s_lookup[];
@@ -135,11 +144,11 @@ typedef enum %(name)s
 
     i = 0
     for value in enum_values:
+        enum_full_value = generate_enum_full_value(name, value)
         enum_decl += mcgen('''
-    %(abbrev)s_%(value)s = %(i)d,
+    %(enum_full_value)s = %(i)d,
 ''',
-                     abbrev=de_camel_case(name).upper(),
-                     value=generate_enum_name(value),
+                     enum_full_value = enum_full_value,
                      i=i)
         i += 1
 
@@ -192,14 +201,21 @@ def generate_union(expr):
     base = expr.get('base')
     discriminator = expr.get('discriminator')
 
+    enum_define = discriminator_find_enum_define(expr)
+    if enum_define:
+        discriminator_type_name = enum_define['enum_name']
+    else:
+        discriminator_type_name = '%sKind' % (name)
+
     ret = mcgen('''
 struct %(name)s
 {
-    %(name)sKind kind;
+    %(discriminator_type_name)s kind;
     union {
         void *data;
 ''',
-                name=name)
+                name=name,
+                discriminator_type_name=discriminator_type_name)
 
     for key in typeinfo:
         ret += mcgen('''
@@ -263,14 +279,15 @@ void qapi_free_%(type)s(%(c_type)s obj)
 
 
 try:
-    opts, args = getopt.gnu_getopt(sys.argv[1:], "chbp:o:",
+    opts, args = getopt.gnu_getopt(sys.argv[1:], "chbp:i:o:",
                                    ["source", "header", "builtins",
-                                    "prefix=", "output-dir="])
+                                    "prefix=", "input-file=", "output-dir="])
 except getopt.GetoptError, err:
     print str(err)
     sys.exit(1)
 
 output_dir = ""
+input_file = ""
 prefix = ""
 c_file = 'qapi-types.c'
 h_file = 'qapi-types.h'
@@ -282,6 +299,8 @@ do_builtins = False
 for o, a in opts:
     if o in ("-p", "--prefix"):
         prefix = a
+    elif o in ("-i", "--input-file"):
+        input_file = a
     elif o in ("-o", "--output-dir"):
         output_dir = a + "/"
     elif o in ("-c", "--source"):
@@ -362,7 +381,7 @@ fdecl.write(mcgen('''
 ''',
                   guard=guardname(h_file)))
 
-exprs = parse_schema(sys.stdin)
+exprs = parse_schema(input_file)
 exprs = filter(lambda expr: not expr.has_key('gen'), exprs)
 
 fdecl.write(guardstart("QAPI_TYPES_BUILTIN_STRUCT_DECL"))
@@ -380,8 +399,11 @@ for expr in exprs:
         fdef.write(generate_enum_lookup(expr['enum'], expr['data']))
     elif expr.has_key('union'):
         ret += generate_fwd_struct(expr['union'], expr['data']) + "\n"
-        ret += generate_enum('%sKind' % expr['union'], expr['data'].keys())
-        fdef.write(generate_enum_lookup('%sKind' % expr['union'], expr['data'].keys()))
+        enum_define = discriminator_find_enum_define(expr)
+        if not enum_define:
+            ret += generate_enum('%sKind' % expr['union'], expr['data'].keys())
+            fdef.write(generate_enum_lookup('%sKind' % expr['union'],
+                                            expr['data'].keys()))
         if expr.get('discriminator') == {}:
             fdef.write(generate_anon_union_qtypes(expr))
     else:
@@ -407,7 +429,7 @@ if do_builtins:
 for expr in exprs:
     ret = "\n"
     if expr.has_key('type'):
-        ret += generate_struct(expr['type'], "", expr['data']) + "\n"
+        ret += generate_struct(expr) + "\n"
         ret += generate_type_cleanup_decl(expr['type'] + "List")
         fdef.write(generate_type_cleanup(expr['type'] + "List") + "\n")
         ret += generate_type_cleanup_decl(expr['type'])

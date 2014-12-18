@@ -29,6 +29,7 @@
  */
 #include "qemu-common.h"
 #include "hw/hw.h"
+#include "qapi/visitor.h"
 #include "qemu/range.h"
 #include "hw/isa/isa.h"
 #include "hw/sysbus.h"
@@ -525,7 +526,51 @@ static const MemoryRegionOps ich9_rst_cnt_ops = {
     .endianness = DEVICE_LITTLE_ENDIAN
 };
 
-static int ich9_lpc_initfn(PCIDevice *d)
+Object *ich9_lpc_find(void)
+{
+    bool ambig;
+    Object *o = object_resolve_path_type("", TYPE_ICH9_LPC_DEVICE, &ambig);
+
+    if (ambig) {
+        return NULL;
+    }
+    return o;
+}
+
+static void ich9_lpc_get_sci_int(Object *obj, Visitor *v,
+                                 void *opaque, const char *name,
+                                 Error **errp)
+{
+    ICH9LPCState *lpc = ICH9_LPC_DEVICE(obj);
+    uint32_t value = ich9_lpc_sci_irq(lpc);
+
+    visit_type_uint32(v, &value, name, errp);
+}
+
+static void ich9_lpc_add_properties(ICH9LPCState *lpc)
+{
+    static const uint8_t acpi_enable_cmd = ICH9_APM_ACPI_ENABLE;
+    static const uint8_t acpi_disable_cmd = ICH9_APM_ACPI_DISABLE;
+
+    object_property_add(OBJECT(lpc), ACPI_PM_PROP_SCI_INT, "uint32",
+                        ich9_lpc_get_sci_int,
+                        NULL, NULL, NULL, NULL);
+    object_property_add_uint8_ptr(OBJECT(lpc), ACPI_PM_PROP_ACPI_ENABLE_CMD,
+                                  &acpi_enable_cmd, NULL);
+    object_property_add_uint8_ptr(OBJECT(lpc), ACPI_PM_PROP_ACPI_DISABLE_CMD,
+                                  &acpi_disable_cmd, NULL);
+
+    ich9_pm_add_properties(OBJECT(lpc), &lpc->pm, NULL);
+}
+
+static void ich9_lpc_initfn(Object *obj)
+{
+    ICH9LPCState *lpc = ICH9_LPC_DEVICE(obj);
+
+    ich9_lpc_add_properties(lpc);
+}
+
+static int ich9_lpc_init(PCIDevice *d)
 {
     ICH9LPCState *lpc = ICH9_LPC_DEVICE(d);
     ISABus *isa_bus;
@@ -551,8 +596,22 @@ static int ich9_lpc_initfn(PCIDevice *d)
     memory_region_add_subregion_overlap(pci_address_space_io(d),
                                         ICH9_RST_CNT_IOPORT, &lpc->rst_cnt_mem,
                                         1);
-
     return 0;
+}
+
+static void ich9_device_plug_cb(HotplugHandler *hotplug_dev,
+                                DeviceState *dev, Error **errp)
+{
+    ICH9LPCState *lpc = ICH9_LPC_DEVICE(hotplug_dev);
+
+    ich9_pm_device_plug_cb(&lpc->pm, dev, errp);
+}
+
+static void ich9_device_unplug_cb(HotplugHandler *hotplug_dev,
+                                  DeviceState *dev, Error **errp)
+{
+    error_setg(errp, "acpi: device unplug request for not supported device"
+               " type: %s", object_get_typename(OBJECT(dev)));
 }
 
 static bool ich9_rst_cnt_needed(void *opaque)
@@ -576,7 +635,6 @@ static const VMStateDescription vmstate_ich9_lpc = {
     .name = "ICH9LPC",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .post_load = ich9_lpc_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(d, ICH9LPCState),
@@ -599,26 +657,40 @@ static void ich9_lpc_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
     PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
+    HotplugHandlerClass *hc = HOTPLUG_HANDLER_CLASS(klass);
+    AcpiDeviceIfClass *adevc = ACPI_DEVICE_IF_CLASS(klass);
 
     set_bit(DEVICE_CATEGORY_BRIDGE, dc->categories);
     dc->reset = ich9_lpc_reset;
-    k->init = ich9_lpc_initfn;
+    k->init = ich9_lpc_init;
     dc->vmsd = &vmstate_ich9_lpc;
-    dc->no_user = 1;
     k->config_write = ich9_lpc_config_write;
     dc->desc = "ICH9 LPC bridge";
     k->vendor_id = PCI_VENDOR_ID_INTEL;
     k->device_id = PCI_DEVICE_ID_INTEL_ICH9_8;
     k->revision = ICH9_A2_LPC_REVISION;
     k->class_id = PCI_CLASS_BRIDGE_ISA;
-
+    /*
+     * Reason: part of ICH9 southbridge, needs to be wired up by
+     * pc_q35_init()
+     */
+    dc->cannot_instantiate_with_device_add_yet = true;
+    hc->plug = ich9_device_plug_cb;
+    hc->unplug = ich9_device_unplug_cb;
+    adevc->ospm_status = ich9_pm_ospm_status;
 }
 
 static const TypeInfo ich9_lpc_info = {
     .name       = TYPE_ICH9_LPC_DEVICE,
     .parent     = TYPE_PCI_DEVICE,
     .instance_size = sizeof(struct ICH9LPCState),
+    .instance_init = ich9_lpc_initfn,
     .class_init  = ich9_lpc_class_init,
+    .interfaces = (InterfaceInfo[]) {
+        { TYPE_HOTPLUG_HANDLER },
+        { TYPE_ACPI_DEVICE_IF },
+        { }
+    }
 };
 
 static void ich9_lpc_register(void)

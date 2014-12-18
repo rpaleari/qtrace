@@ -18,7 +18,7 @@
 
 #include "qtrace/gate.h"
 
-#ifdef CONFIG_QTRACE_SYSCALL
+#ifdef CONFIG_QTRACE_TRACER
 #include "qtrace/trace/notify_syscall.h"
 #endif
 
@@ -26,10 +26,14 @@
 #include "qtrace/taint/notify_taint.h"
 #endif
 
-static CPUX86State *cpu_current_env = NULL;
+static CPUX86State *gbl_cpu_current_env = NULL;
+
+#ifdef CONFIG_QTRACE_TRACER
+static bool gbl_first_syscall = false;
+#endif
 
 static inline void qtrace_update_current_env(CPUX86State *env) {
-  cpu_current_env = env;  
+  gbl_cpu_current_env = env;
 }
 
 hwaddr qtrace_gate_va2phy(CPUArchState *env, target_ulong va) {
@@ -53,13 +57,14 @@ hwaddr qtrace_gate_va2phy(CPUArchState *env, target_ulong va) {
 
 /* Translate the virtual address into a physical one */
 hwaddr qtrace_gate_cb_va2phy(target_ulong va) {
-  return qtrace_gate_va2phy(cpu_current_env, va);
+  return qtrace_gate_va2phy(gbl_cpu_current_env, va);
 }
 
 /* Flush QEMU TB cache */
 int qtrace_gate_cb_tbflush(void) {
   CPUState *cpu;
-  for (cpu = first_cpu; cpu != NULL; cpu = cpu->next_cpu) {
+
+  CPU_FOREACH(cpu) {
     CPUArchState *env = cpu->env_ptr;
     tb_flush(env);
   }
@@ -70,33 +75,91 @@ int qtrace_gate_cb_tbflush(void) {
 int qtrace_gate_cb_peek(target_ulong addr, unsigned char *buffer, int len) {
   int r;
 
-  assert(cpu_current_env != NULL);
-  r = cpu_memory_rw_debug(ENV_GET_CPU(cpu_current_env), addr, buffer, len, 0);
+  assert(gbl_cpu_current_env != NULL);
+  r = cpu_memory_rw_debug(ENV_GET_CPU(gbl_cpu_current_env), addr, buffer,
+			  len, 0);
 
   return r;
 }
 
 /* Peek CPU registers */
-int qtrace_gate_cb_regs(CpuRegisters *regs) {
-  if (cpu_current_env == NULL) {
+int qtrace_gate_cb_regs(enum CpuRegister reg, target_ulong *value) {
+  if (gbl_cpu_current_env == NULL) {
     return -1;
   }
 
-#define R(src, dst) regs->dst = cpu_current_env->src
-  R(regs[R_EAX], eax);
-  R(regs[R_ECX], ecx);
-  R(regs[R_ESP], esp);
-  R(regs[R_EBP], ebp);
+#define R(name, src)                               \
+  case Register ## name:                           \
+    *value = gbl_cpu_current_env->src;		   \
+    break
 
-  R(cr[3], cr3);
+  switch (reg) {
+    R(Eax, regs[R_EAX]);
+    R(Ecx, regs[R_ECX]);
+    R(Edx, regs[R_EDX]);
+    R(Ebx, regs[R_EBX]);
+    R(Esp, regs[R_ESP]);
+    R(Ebp, regs[R_EBP]);
+    R(Esi, regs[R_ESI]);
+    R(Edi, regs[R_EDI]);
 
-  R(eip, pc);
+#ifdef TARGET_X86_64
+    R(R8,  regs[8]);
+    R(R9,  regs[9]);
+    R(R10, regs[10]);
+    R(R11, regs[11]);
+    R(R12, regs[12]);
+    R(R13, regs[13]);
+    R(R14, regs[14]);
+    R(R15, regs[15]);
+#endif
 
-  R(segs[R_CS].base, cs_base);
-  R(segs[R_FS].base, fs_base);
+    R(Cr3, cr[3]);
+    R(Pc, eip);
+    R(CsBase, segs[R_CS].base);
+    R(FsBase, segs[R_FS].base);
+    R(GsBase, segs[R_GS].base);
+
+  default:
+    assert(0);
+    break;
+  }
 #undef R
 
   return 0;
+}
+
+/* Peek CPU MSR registers. This function closely resembles to
+   target-i386/misc_helper.c:helper_rdmsr(). However, the latter eventually
+   writes the content of the requested MSR to EDX:EAX, so it does not fit our
+   purposes. */
+uint64_t qtrace_gate_cb_rdmsr(target_ulong num) {
+  uint64_t val;
+
+  assert(gbl_cpu_current_env != NULL);
+
+#define C(num, field)				\
+  case num:					\
+    val = gbl_cpu_current_env->field;		\
+    break;
+
+  switch (num) {
+    C(MSR_IA32_SYSENTER_CS, sysenter_cs);
+    C(MSR_IA32_SYSENTER_ESP, sysenter_esp);
+    C(MSR_IA32_SYSENTER_EIP, sysenter_eip);
+#ifdef TARGET_X86_64
+    C(MSR_FSBASE, segs[R_FS].base);
+    C(MSR_GSBASE, segs[R_GS].base);
+    C(MSR_KERNELGSBASE, kernelgsbase);
+#endif
+  default:
+    val = 0;
+    break;
+  }
+
+#undef C
+
+  return val;
 }
 
 void qtrace_gate_cpl(CPUX86State *env, int oldcpl, int newcpl) {
@@ -104,23 +167,32 @@ void qtrace_gate_cpl(CPUX86State *env, int oldcpl, int newcpl) {
     /* No CPL switch */
     return;
   }
-
   qtrace_update_current_env(env);
 #ifdef CONFIG_QTRACE_TAINT
-  notify_taint_cpl(env->cr[3], newcpl);
+#ifdef CONFIG_QTRACE_TRACER
+  /* We postpone CPL-change notifications until we see the first system
+     call. This to prevent expensive taint-tracking analyses during early boot
+     phases. */
+  if (gbl_first_syscall)
+#endif
+    notify_taint_cpl(env->cr[3], newcpl);
 #endif
 
   return;
 }
 
-#ifdef CONFIG_QTRACE_SYSCALL
+#ifdef CONFIG_QTRACE_TRACER
 void qtrace_gate_syscall_start(CPUX86State *env) {
   target_ulong sysno = env->regs[R_EAX];
-  target_ulong stack = env->regs[R_EDX];
   target_ulong cr3 = env->cr[3];
 
   qtrace_update_current_env(env);
-  notify_syscall_start(cr3, sysno, stack);
+
+  /* Check if this is the first syscall we encountered */
+  if (unlikely(!gbl_first_syscall)) {
+    gbl_first_syscall = true;
+  }
+  notify_syscall_start(cr3, sysno);
 }
 
 void qtrace_gate_syscall_end(CPUX86State *env) {
@@ -173,7 +245,7 @@ void qtrace_gate_tracer_set_state(bool state) {
 bool qtrace_gate_tracer_get_state(void) {
   return notify_tracer_get_state();
 }
-#endif	/* CONFIG_QTRACE_SYSCALL */
+#endif	/* CONFIG_QTRACE_TRACER */
 
 #ifdef CONFIG_QTRACE_TAINT
 void qtrace_gate_taint_set_state(bool state) {

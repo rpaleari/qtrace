@@ -111,11 +111,11 @@ CREATE dos-name b allot
   next-cluster @ read-cluster REPEAT false ELSE true THEN ;
 : find-path ( dir-cluster name len -- cluster file-len true | false )
   dup 0= IF 3drop false ."  empty name " EXIT THEN
-  over c@ [char] \ = IF 1 /string ."  slash " RECURSE EXIT THEN
+  over c@ [char] \ = IF 1 /string  RECURSE EXIT THEN
   [char] \ split 2>r find-file 0= IF 2r> 2drop false ."  not found " EXIT THEN
   r@ 0<> <> IF 2drop 2r> 2drop false ."  no dir<->file match " EXIT THEN
-  r@ 0<> IF drop 2r> ."  more... " RECURSE EXIT THEN
-  2r> 2drop true ."  got it " ;
+  r@ 0<> IF drop 2r> RECURSE EXIT THEN
+  2r> 2drop true ;
   
 : do-super ( -- )
   0 200 read-data
@@ -145,7 +145,7 @@ CREATE dos-name b allot
   #root-entries @ 20 * bytes/sector @ // - sectors/cluster @ /
   dup #clusters !
   dup ff5 < IF drop c ELSE fff5 < IF 10 ELSE 20 THEN THEN fat-type !
-cr ." FAT" base @ decimal fat-type @ . base !
+  base @ decimal base !
 
   \ Starting offset of first fat.
   #reserved-sectors @ bytes/sector @ * fat-offset !
@@ -175,6 +175,7 @@ INSTANCE VARIABLE pos-in-data
   r@ pos-in-data +!  r@ current-pos +!  pos-in-data @ #data @ = IF
   next-cluster @ ?dup IF read-cluster 0 pos-in-data ! THEN THEN r> ;
 : read ( adr len -- actual )
+  file-len @ min                \ len cannot be greater than file size
   dup >r BEGIN dup WHILE 2dup read dup 0= ABORT" fat-files: read failed"
   /string ( tuck - >r + r> ) REPEAT 2drop r> ;
 : load ( adr -- len )

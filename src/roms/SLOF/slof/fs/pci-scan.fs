@@ -36,6 +36,8 @@ VARIABLE pci-max-io
 \       the 3rd slot on the HostBridge bus
 here 100 allot CONSTANT pci-device-vec
 0 VALUE pci-device-vec-len
+\ enable/disable creation of hotplug-specific properties
+0 VALUE pci-hotplug-enabled
 
 
 \ Fixme Glue to the pci-devices ... remove this later
@@ -45,7 +47,6 @@ here 100 allot CONSTANT pci-device-vec
 
 
 #include "pci-helper.fs"
-
 
 \ Dump out the pci device-slot vector
 : pci-vec ( -- )
@@ -82,7 +83,7 @@ here 100 allot CONSTANT pci-device-vec
 \ needed for scanning possible devices behind the bridge
 : pci-bridge-set-mmio-base ( addr -- )
         pci-next-mmio @ 100000 #aligned         \ read the current Value and align to 1MB boundary
-        dup pci-next-mmio !                     \ and write it back
+        dup 100000 + pci-next-mmio !            \ and write back with 1MB for bridge
         10 rshift                               \ mmio-base reg is only the upper 16 bits
         pci-max-mmio @ FFFF0000 and or          \ and Insert mmio Limit (set it to max)
         swap 20 + rtas-config-l!                \ and write it into the bridge
@@ -104,7 +105,7 @@ here 100 allot CONSTANT pci-device-vec
 \ needed for scanning possible devices behind the bridge
 : pci-bridge-set-mem-base ( addr -- )
         pci-next-mem @ 100000 #aligned          \ read the current Value and align to 1MB boundary
-        dup pci-next-mem !                      \ and write it back
+        dup 100000 + pci-next-mem !             \ and write back with 1MB for bridge
         over 24 + rtas-config-w@                \ check if 64bit support
         1 and IF                                \ IF 64 bit support
                 2dup 20 rshift                  \ | keep upper 32 bits
@@ -139,7 +140,7 @@ here 100 allot CONSTANT pci-device-vec
 \ needed for scanning possible devices behind the bridge
 : pci-bridge-set-io-base ( addr -- )
         pci-next-io @ 1000 #aligned             \ read the current Value and align to 4KB boundary
-        dup pci-next-io !                       \ and write it back
+        dup 1000 + pci-next-io !                \ and write back with 4K for bridge
         over 1C + rtas-config-l@                \ check if 32bit support
         1 and IF                                \ IF 32 bit support
                 2dup 10 rshift                  \ | keep upper 16 bits
@@ -190,11 +191,13 @@ here 100 allot CONSTANT pci-device-vec
 
 \ define function pointer as forward declaration of pci-probe-bus
 DEFER func-pci-probe-bus
+DEFER func-pci-bridge-range-props
 
 \ Setup the Base and Limits in the Bridge
 \ and scan the bus(es) beyond that Bridge
 : pci-bridge-probe ( addr -- )
         dup pci-bridge-set-bases                        \ SetUp all Base Registers
+	dup func-pci-bridge-range-props                 \ Setup temporary "range
         pci-bus-number 1+ TO pci-bus-number             \ increase number of busses found
         pci-device-vec-len 1+ TO pci-device-vec-len     \ increase the device-slot vector depth
         dup                                             \ stack config-addr for pci-bus!
@@ -334,3 +337,5 @@ DEFER func-pci-probe-bus
 \ provide all words needed to generate the properties and/or assign BAR values
 #include "pci-properties.fs"
 
+\ setup the function pointer for bridge ranges
+' pci-bridge-range-props TO func-pci-bridge-range-props

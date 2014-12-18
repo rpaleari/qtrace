@@ -13,6 +13,8 @@
 
 \ Device nodes.
 
+false VALUE debug-find-component?
+
 VARIABLE device-tree
 VARIABLE current-node
 : get-node  current-node @ dup 0= ABORT" No active device tree node" ;
@@ -216,6 +218,26 @@ CREATE $indent 100 allot  VARIABLE indent 0 indent !
    THEN
 ;
 
+: $cat-instance-unit
+   dup parent 0= IF drop EXIT THEN
+   \ No instance unit, use node unit
+   dup instance>#units @ 0= IF
+      ihandle>phandle $cat-unit
+      EXIT
+   THEN
+   dup >r push-my-self
+   ['] my-unit CATCH IF pop-my-self r> drop EXIT THEN
+   pop-my-self
+   s" encode-unit"
+   r> ihandle>phandle parent
+   $call-static
+   dup IF
+      dup >r here swap move s" @" $cat here r> $cat
+   ELSE
+      2drop
+   THEN
+;
+
 \ Getting basic info about a node.
 : node>name  dup >r s" name" rot get-property IF r> (u.) ELSE 1- r> drop THEN ;
 : node>qname dup node>name rot ['] $cat-unit CATCH IF drop THEN ;
@@ -238,9 +260,15 @@ CREATE $indent 100 allot  VARIABLE indent 0 indent !
   \ open-dev and friends, if there were no interposition.
   dup instance>parent @ dup 0= IF 2drop false EXIT THEN
   ihandle>phandle swap ihandle>phandle parent <> ;
-: instance>qname  dup >r interposed? IF s" %" ELSE 0 0 THEN
-                  r@ ihandle>phandle node>qname $cat  r> instance>args 2@
-                  dup IF 2>r s" :" $cat 2r> $cat ELSE 2drop THEN ;
+
+: instance>qname
+  dup >r interposed? IF s" %" ELSE 0 0 THEN
+  r@ dup ihandle>phandle node>name
+  rot ['] $cat-instance-unit CATCH IF drop THEN
+  $cat r> instance>args 2@ swap
+  dup IF 2>r s" :" $cat 2r> $cat ELSE 2drop THEN
+;
+
 : instance>qpath \ With interposed nodes.
   here 0 rot BEGIN dup WHILE dup instance>parent @ REPEAT 2drop
   dup 0= IF [char] / c, THEN
@@ -293,6 +321,27 @@ defer find-node
 
 : list-alias ( -- )
     s" /aliases" find-node dup IF (.list-alias) THEN ;
+
+\ return next available name for aliasing or
+\ false if more than MAX-ALIAS aliases found
+8 CONSTANT MAX-ALIAS
+1 VALUE alias-ind
+: get-next-alias ( $alias-name -- $next-alias-name|FALSE )
+    2dup find-alias IF
+        drop
+        1 TO alias-ind
+        BEGIN
+            2dup alias-ind $cathex 2dup find-alias
+        WHILE
+            drop 2drop
+            alias-ind 1 + TO alias-ind
+            alias-ind MAX-ALIAS = IF
+                2drop FALSE EXIT
+            THEN
+        REPEAT
+        strdup 2swap 2drop
+    THEN
+;
 
 : devalias ( "{alias-name}<>{device-specifier}<cr>" -- )
     parse-word parse-word dup IF set-alias
@@ -451,6 +500,28 @@ CREATE user-instance-units 4 cells allot
 : hex-encode-unit ( addr.lo ... addr.hi ncells -- str len )
   base @ >r hex generic-encode-unit r> base ! ;
 
+: hex64-decode-unit ( str len ncells -- addr.lo ... addr.hi )
+  dup 2 <> IF
+     hex-decode-unit
+  ELSE
+     drop
+     base @ >r hex
+     $number IF 0 0 ELSE xlsplit THEN
+     r> base !
+  THEN
+;
+
+: hex64-encode-unit ( addr.lo ... addr.hi ncells -- str len )
+  dup 2 <> IF
+     hex-encode-unit
+  ELSE
+     drop
+     base @ >r hex
+     lxjoin (u.)
+     r> base !
+  THEN
+;
+
 : handle-leading-/ ( path len -- path' len' )
   dup IF over c@ [char] / = IF 1 /string device-tree @ set-node THEN THEN ;
 : match-name ( name len node -- match? )
@@ -462,8 +533,12 @@ CREATE user-instance-units 4 cells allot
 CREATE search-unit 4 cells allot
 
 : match-unit ( node -- match? )
-  node>space search-unit #search-unit 0 ?DO 2dup @ swap @ <> IF
-  2drop false UNLOOP EXIT THEN cell+ swap cell+ swap LOOP 2drop true ;
+  \ A node with no space is a wildcard and will always match
+  dup >space? IF
+      node>space search-unit #search-unit 0 ?DO 2dup @ swap @ <> IF
+      2drop false UNLOOP EXIT THEN cell+ swap cell+ swap LOOP 2drop true
+  ELSE drop true THEN
+;
 : match-node ( name len node -- match? )
   dup >r match-name r> match-unit and ; \ XXX e3d
 : find-kid ( name len -- node|0 )
@@ -500,6 +575,10 @@ CREATE search-unit 4 cells allot
   THEN
 ;
 
+\ XXX This is an old hack that allows wildcard nodes to work
+\     by not having a #address-cells in the parent and no
+\     decode unit. This should be removed.
+\     (It appears to be still used on js2x)
 : set-instance-unit  ( unitaddr len -- )
    dup 0= IF 2drop  0 to user-instance-#units  EXIT THEN
    2dup 0 -rot bounds ?DO
@@ -519,11 +598,30 @@ CREATE search-unit 4 cells allot
 ;
 
 : find-component  ( path len -- path' len' args len node|0 )
+   debug-find-component? IF
+      ." find-component for " 2dup type cr
+   THEN
    split-component           ( path'. args. name. unit. )
+   debug-find-component? IF
+      ." -> unit  =" 2dup type cr
+      ." -> stack =" .s cr
+   THEN
    ['] set-search-unit CATCH IF
+      \ XXX: See comment in set-instance-unit
+      ." WARNING: Obsolete old wildcard hack " .s cr
       set-instance-unit
    THEN
    resolve-relatives find-kid        ( path' len' args len node|0 )
+
+   \ If resolve returned a wildcard node, and we haven't hit
+   \ the above gross hack then copy the unit
+   dup IF dup >space? not #search-unit 0 > AND user-instance-#units 0= AND IF
+     #search-unit dup to user-instance-#units 0 ?DO
+        search-unit i cells + @ user-instance-units i cells + !
+     LOOP
+   THEN THEN
+
+   \ XXX This can go away with the old wildcard hack
    dup IF dup >space? user-instance-#units 0 > AND IF
       \ User supplied a unit value, but node also has different physical unit
       cr ." find-component with unit mismatch!" .s cr

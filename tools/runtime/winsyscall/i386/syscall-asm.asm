@@ -1,5 +1,5 @@
 ; Copyright 2014, Roberto Paleari (@rpaleari)
-        
+
 .686p
 .model flat,StdCall
 option casemap:none
@@ -16,10 +16,10 @@ saveargs:
         inc ecx
         cmp ecx, _nargs
         jne saveargs
-        
+
         mov eax, _sysno
         push 0CAFEBABEh
-        
+
         call [KiFastSystemCall]
 
         ret
@@ -31,11 +31,15 @@ DoSyscall PROC StdCall _sysno, _args
         mov eax, _args
         sub eax, 4
 
+        push ebx
+        push ecx
+        push edx
+
         ; Overwritten by the "call" return address
         push [eax-4]
         push eax
         mov ebx, esp
-        
+
         mov esp, eax
         mov eax, _sysno
         call [KiFastSystemCall]
@@ -43,8 +47,12 @@ DoSyscall PROC StdCall _sysno, _args
         ; Don't touch eax, as it contains the syscall return value
         mov esp, ebx
         pop ebx
-        pop [ebx-4]        
-        
+        pop [ebx-4]
+
+        pop edx
+        pop ecx
+        pop ebx
+
         ret
 DoSyscall ENDP
 

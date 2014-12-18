@@ -124,18 +124,6 @@ int qemu_main(int argc, char **argv, char **envp);
 void qemu_get_timedate(struct tm *tm, int offset);
 int qemu_timedate_diff(struct tm *tm);
 
-#if !GLIB_CHECK_VERSION(2, 20, 0)
-/*
- * Glib before 2.20.0 doesn't implement g_poll, so wrap it to compile properly
- * on older systems.
- */
-static inline gint g_poll(GPollFD *fds, guint nfds, gint timeout)
-{
-    GMainContext *ctx = g_main_context_default();
-    return g_main_context_get_poll_func(ctx)(fds, nfds, timeout);
-}
-#endif
-
 /**
  * is_help_option:
  * @s: string to test
@@ -190,6 +178,9 @@ int64_t strtosz(const char *nptr, char **end);
 int64_t strtosz_suffix(const char *nptr, char **end, const char default_suffix);
 int64_t strtosz_suffix_unit(const char *nptr, char **end,
                             const char default_suffix, int64_t unit);
+
+/* used to print char* safely */
+#define STR_OR_NULL(str) ((str) ? (str) : "null")
 
 /* path.c */
 void init_paths(const char *prefix);
@@ -258,14 +249,6 @@ typedef int (*DMA_transfer_handler) (void *opaque, int nchan, int pos, int size)
 
 typedef uint64_t pcibus_t;
 
-typedef enum LostTickPolicy {
-    LOST_TICK_DISCARD,
-    LOST_TICK_DELAY,
-    LOST_TICK_MERGE,
-    LOST_TICK_SLEW,
-    LOST_TICK_MAX
-} LostTickPolicy;
-
 typedef struct PCIHostDeviceAddress {
     unsigned int domain;
     unsigned int bus;
@@ -332,9 +315,10 @@ void qemu_iovec_init_external(QEMUIOVector *qiov, struct iovec *iov, int niov);
 void qemu_iovec_add(QEMUIOVector *qiov, void *base, size_t len);
 void qemu_iovec_concat(QEMUIOVector *dst,
                        QEMUIOVector *src, size_t soffset, size_t sbytes);
-void qemu_iovec_concat_iov(QEMUIOVector *dst,
-                           struct iovec *src_iov, unsigned int src_cnt,
-                           size_t soffset, size_t sbytes);
+size_t qemu_iovec_concat_iov(QEMUIOVector *dst,
+                             struct iovec *src_iov, unsigned int src_cnt,
+                             size_t soffset, size_t sbytes);
+bool qemu_iovec_is_zero(QEMUIOVector *qiov);
 void qemu_iovec_destroy(QEMUIOVector *qiov);
 void qemu_iovec_reset(QEMUIOVector *qiov);
 size_t qemu_iovec_to_buf(QEMUIOVector *qiov, size_t offset,
@@ -343,6 +327,9 @@ size_t qemu_iovec_from_buf(QEMUIOVector *qiov, size_t offset,
                            const void *buf, size_t bytes);
 size_t qemu_iovec_memset(QEMUIOVector *qiov, size_t offset,
                          int fillc, size_t bytes);
+ssize_t qemu_iovec_compare(QEMUIOVector *a, QEMUIOVector *b);
+void qemu_iovec_clone(QEMUIOVector *dest, const QEMUIOVector *src, void *buf);
+void qemu_iovec_discard_back(QEMUIOVector *qiov, size_t bytes);
 
 bool buffer_is_zero(const void *buf, size_t len);
 
@@ -357,7 +344,7 @@ char *qemu_find_file(int type, const char *name);
 
 /* OS specific functions */
 void os_setup_early_signal_handling(void);
-char *os_find_datadir(const char *argv0);
+char *os_find_datadir(void);
 void os_parse_cmd_args(int index, const char *optarg);
 void os_pidfile_error(void);
 
@@ -474,5 +461,7 @@ size_t buffer_find_nonzero_offset(const void *buf, size_t len);
  * helper to parse debug environment variables
  */
 int parse_debug_env(const char *name, int max, int initial);
+
+const char *qemu_ether_ntoa(const MACAddr *mac);
 
 #endif

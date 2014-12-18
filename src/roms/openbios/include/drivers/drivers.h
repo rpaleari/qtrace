@@ -46,8 +46,6 @@ static inline int is_newworld(void)
 int ob_sbus_init(uint64_t base, int machine_id);
 
 /* arch/sparc32/console.c */
-void tcx_init(uint64_t base);
-void tcx_hw_set_color(void);
 void kbd_init(uint64_t base);
 #endif
 #ifdef CONFIG_DRIVER_IDE
@@ -65,7 +63,7 @@ int ob_esp_init(unsigned int slot, uint64_t base, unsigned long espoffset,
 /* drivers/obio.c */
 int ob_obio_init(uint64_t slavio_base, unsigned long fd_offset,
                  unsigned long counter_offset, unsigned long intr_offset,
-                 unsigned long aux1_offset, unsigned long aux2_offset,
+                 int intr_ncpu, unsigned long aux1_offset, unsigned long aux2_offset,
                  unsigned long mem_size);
 int start_cpu(unsigned int pc, unsigned int context_ptr, unsigned int context,
               int cpu);
@@ -111,19 +109,22 @@ void ob_pc_serial_init(const char *path, const char *dev_name, uint64_t base,
 int uart_init(int port, unsigned long speed);
 int uart_charav(int port);
 char uart_getchar(int port);
-void serial_putchar(int c);
+void uart_putchar(int c);
 #endif
 #ifdef CONFIG_DRIVER_ESCC
-int uart_init(phys_addr_t port, unsigned long speed);
-int uart_charav(uintptr_t port);
-char uart_getchar(uintptr_t port);
-void serial_putchar(int c);
+int escc_uart_init(phys_addr_t port, unsigned long speed);
+int escc_uart_charav(uintptr_t port);
+char escc_uart_getchar(uintptr_t port);
+void escc_uart_putchar(int c);
 void serial_cls(void);
 #ifdef CONFIG_DRIVER_ESCC_SUN
 int keyboard_dataready(void);
 unsigned char keyboard_readdata(void);
 #endif
 #endif
+int macio_get_nvram_size(void);
+void macio_nvram_put(char *buf);
+void macio_nvram_get(char *buf);
 
 /* drivers/timer.c */
 void setup_timers(void);

@@ -40,8 +40,9 @@
  */
 
 #define __LITTLE_ENDIAN
+#include "malloc.h"
+#include "string.h"
 #include "util.h"
-#include "jpeg.h"
 #define ISHIFT 11
 
 #define IFIX(a) ((int)((a) * (1 << ISHIFT) + .5))

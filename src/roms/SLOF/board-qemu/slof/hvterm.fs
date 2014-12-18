@@ -13,8 +13,23 @@
 \ PAPR hvterm console.  Enabled very early.
 
 0 CONSTANT default-hvtermno
+\ Buffer for pre-display
+4096 CONSTANT disp-size
+CREATE prevga-disp-buf 4096 allot
+0 value disp-ptr
+true value store-prevga?
 
-: hvterm-emit  default-hvtermno SWAP hv-putchar ;
+: store-to-disp-buffer         ( ch  --  )
+    prevga-disp-buf disp-ptr disp-size MOD + c!
+    disp-ptr 1 + to disp-ptr
+;
+
+: hvterm-emit
+    store-prevga? IF
+	dup store-to-disp-buffer
+    THEN
+    default-hvtermno SWAP hv-putchar
+;
 : hvterm-key?  default-hvtermno hv-haschar ;
 : hvterm-key   BEGIN hvterm-key? UNTIL default-hvtermno hv-getchar ;
 

@@ -10,10 +10,13 @@
 
 #include "qemu-io.h"
 #include "block/block_int.h"
+#include "block/qapi.h"
+#include "qemu/main-loop.h"
+#include "qemu/timer.h"
 
 #define CMD_NOFILE_OK   0x01
 
-int qemuio_misalign;
+bool qemuio_misalign;
 
 static cmdinfo_t *cmdtab;
 static int ncmds;
@@ -90,6 +93,21 @@ static const cmdinfo_t *find_command(const char *cmd)
         }
     }
     return NULL;
+}
+
+/* Invoke fn() for commands with a matching prefix */
+void qemuio_complete_command(const char *input,
+                             void (*fn)(const char *cmd, void *opaque),
+                             void *opaque)
+{
+    cmdinfo_t *ct;
+    size_t input_len = strlen(input);
+
+    for (ct = cmdtab; ct < &cmdtab[ncmds]; ct++) {
+        if (strncmp(input, ct->name, input_len) == 0) {
+            fn(ct->name, opaque);
+        }
+    }
 }
 
 static char **breakline(char *input, int *count)
@@ -440,7 +458,7 @@ static void coroutine_fn co_write_zeroes_entry(void *opaque)
     CoWriteZeroes *data = opaque;
 
     data->ret = bdrv_co_write_zeroes(data->bs, data->offset / BDRV_SECTOR_SIZE,
-                                     data->count / BDRV_SECTOR_SIZE);
+                                     data->count / BDRV_SECTOR_SIZE, 0);
     data->done = true;
     if (data->ret < 0) {
         *data->total = data->ret;
@@ -465,7 +483,7 @@ static int do_co_write_zeroes(BlockDriverState *bs, int64_t offset, int count,
     co = qemu_coroutine_create(co_write_zeroes_entry);
     qemu_coroutine_enter(co, &data);
     while (!data.done) {
-        qemu_aio_wait();
+        aio_poll(bdrv_get_aio_context(bs), true);
     }
     if (data.ret < 0) {
         return data.ret;
@@ -1069,7 +1087,7 @@ writev_help(void)
 " writes a range of bytes from the given offset source from multiple buffers\n"
 "\n"
 " Example:\n"
-" 'write 512 1k 1k' - writes 2 kilobytes at 512 bytes into the open file\n"
+" 'writev 512 1k 1k' - writes 2 kilobytes at 512 bytes into the open file\n"
 "\n"
 " Writes into a segment of the currently open file, using a buffer\n"
 " filled with a set pattern (0xcdcdcdcd).\n"
@@ -1677,6 +1695,7 @@ static const cmdinfo_t length_cmd = {
 static int info_f(BlockDriverState *bs, int argc, char **argv)
 {
     BlockDriverInfo bdi;
+    ImageInfoSpecific *spec_info;
     char s1[64], s2[64];
     int ret;
 
@@ -1697,6 +1716,13 @@ static int info_f(BlockDriverState *bs, int argc, char **argv)
 
     printf("cluster size: %s\n", s1);
     printf("vm state offset: %s\n", s2);
+
+    spec_info = bdrv_get_specific_info(bs);
+    if (spec_info) {
+        printf("Format specific information:\n");
+        bdrv_image_info_specific_dump(fprintf, stdout, spec_info);
+        qapi_free_ImageInfoSpecific(spec_info);
+    }
 
     return 0;
 }
@@ -1829,6 +1855,10 @@ static int alloc_f(BlockDriverState *bs, int argc, char **argv)
     sector_num = offset >> 9;
     while (remaining) {
         ret = bdrv_is_allocated(bs, sector_num, remaining, &num);
+        if (ret < 0) {
+            printf("is_allocated failed: %s\n", strerror(-ret));
+            return 0;
+        }
         sector_num += num;
         remaining -= num;
         if (ret) {
@@ -1942,6 +1972,18 @@ static int break_f(BlockDriverState *bs, int argc, char **argv)
     return 0;
 }
 
+static int remove_break_f(BlockDriverState *bs, int argc, char **argv)
+{
+    int ret;
+
+    ret = bdrv_debug_remove_breakpoint(bs, argv[1]);
+    if (ret < 0) {
+        printf("Could not remove breakpoint %s: %s\n", argv[1], strerror(-ret));
+    }
+
+    return 0;
+}
+
 static const cmdinfo_t break_cmd = {
        .name           = "break",
        .argmin         = 2,
@@ -1950,6 +1992,15 @@ static const cmdinfo_t break_cmd = {
        .args           = "event tag",
        .oneline        = "sets a breakpoint on event and tags the stopped "
                          "request as tag",
+};
+
+static const cmdinfo_t remove_break_cmd = {
+       .name           = "remove_break",
+       .argmin         = 1,
+       .argmax         = 1,
+       .cfunc          = remove_break_f,
+       .args           = "tag",
+       .oneline        = "remove a breakpoint by tag",
 };
 
 static int resume_f(BlockDriverState *bs, int argc, char **argv)
@@ -1976,7 +2027,7 @@ static const cmdinfo_t resume_cmd = {
 static int wait_break_f(BlockDriverState *bs, int argc, char **argv)
 {
     while (!bdrv_debug_is_suspended(bs, argv[1])) {
-        qemu_aio_wait();
+        aio_poll(bdrv_get_aio_context(bs), true);
     }
 
     return 0;
@@ -2001,6 +2052,46 @@ static const cmdinfo_t abort_cmd = {
        .cfunc          = abort_f,
        .flags          = CMD_NOFILE_OK,
        .oneline        = "simulate a program crash using abort(3)",
+};
+
+static void sleep_cb(void *opaque)
+{
+    bool *expired = opaque;
+    *expired = true;
+}
+
+static int sleep_f(BlockDriverState *bs, int argc, char **argv)
+{
+    char *endptr;
+    long ms;
+    struct QEMUTimer *timer;
+    bool expired = false;
+
+    ms = strtol(argv[1], &endptr, 0);
+    if (ms < 0 || *endptr != '\0') {
+        printf("%s is not a valid number\n", argv[1]);
+        return 0;
+    }
+
+    timer = timer_new_ns(QEMU_CLOCK_HOST, sleep_cb, &expired);
+    timer_mod(timer, qemu_clock_get_ns(QEMU_CLOCK_HOST) + SCALE_MS * ms);
+
+    while (!expired) {
+        main_loop_wait(false);
+    }
+
+    timer_free(timer);
+
+    return 0;
+}
+
+static const cmdinfo_t sleep_cmd = {
+       .name           = "sleep",
+       .argmin         = 1,
+       .argmax         = 1,
+       .cfunc          = sleep_f,
+       .flags          = CMD_NOFILE_OK,
+       .oneline        = "waits for the given value in milliseconds",
 };
 
 static void help_oneline(const char *cmd, const cmdinfo_t *ct)
@@ -2112,7 +2203,9 @@ static void __attribute((constructor)) init_qemuio_commands(void)
     qemuio_add_command(&alloc_cmd);
     qemuio_add_command(&map_cmd);
     qemuio_add_command(&break_cmd);
+    qemuio_add_command(&remove_break_cmd);
     qemuio_add_command(&resume_cmd);
     qemuio_add_command(&wait_break_cmd);
     qemuio_add_command(&abort_cmd);
+    qemuio_add_command(&sleep_cmd);
 }

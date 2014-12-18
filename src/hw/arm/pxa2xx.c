@@ -148,8 +148,7 @@ static const VMStateDescription vmstate_pxa2xx_pm = {
     .name = "pxa2xx_pm",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(pm_regs, PXA2xxState, 0x40),
         VMSTATE_END_OF_LIST()
     }
@@ -215,8 +214,7 @@ static const VMStateDescription vmstate_pxa2xx_cm = {
     .name = "pxa2xx_cm",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(cm_regs, PXA2xxState, 4),
         VMSTATE_UINT32(clkcfg, PXA2xxState),
         VMSTATE_UINT32(pmnc, PXA2xxState),
@@ -224,27 +222,24 @@ static const VMStateDescription vmstate_pxa2xx_cm = {
     }
 };
 
-static int pxa2xx_clkcfg_read(CPUARMState *env, const ARMCPRegInfo *ri,
-                              uint64_t *value)
+static uint64_t pxa2xx_clkcfg_read(CPUARMState *env, const ARMCPRegInfo *ri)
 {
     PXA2xxState *s = (PXA2xxState *)ri->opaque;
-    *value = s->clkcfg;
-    return 0;
+    return s->clkcfg;
 }
 
-static int pxa2xx_clkcfg_write(CPUARMState *env, const ARMCPRegInfo *ri,
-                               uint64_t value)
+static void pxa2xx_clkcfg_write(CPUARMState *env, const ARMCPRegInfo *ri,
+                                uint64_t value)
 {
     PXA2xxState *s = (PXA2xxState *)ri->opaque;
     s->clkcfg = value & 0xf;
     if (value & 2) {
         printf("%s: CPU frequency change attempt\n", __func__);
     }
-    return 0;
 }
 
-static int pxa2xx_pwrmode_write(CPUARMState *env, const ARMCPRegInfo *ri,
-                                uint64_t value)
+static void pxa2xx_pwrmode_write(CPUARMState *env, const ARMCPRegInfo *ri,
+                                 uint64_t value)
 {
     PXA2xxState *s = (PXA2xxState *)ri->opaque;
     static const char *pwrmode[8] = {
@@ -262,7 +257,7 @@ static int pxa2xx_pwrmode_write(CPUARMState *env, const ARMCPRegInfo *ri,
 
     case 1:
         /* Idle */
-        if (!(s->cm_regs[CCCR >> 2] & (1 << 31))) { /* CPDIS */
+        if (!(s->cm_regs[CCCR >> 2] & (1U << 31))) { /* CPDIS */
             cpu_interrupt(CPU(s->cpu), CPU_INTERRUPT_HALT);
             break;
         }
@@ -275,11 +270,11 @@ static int pxa2xx_pwrmode_write(CPUARMState *env, const ARMCPRegInfo *ri,
         goto message;
 
     case 3:
-        s->cpu->env.uncached_cpsr =
-            ARM_CPU_MODE_SVC | CPSR_A | CPSR_F | CPSR_I;
+        s->cpu->env.uncached_cpsr = ARM_CPU_MODE_SVC;
+        s->cpu->env.daif = PSTATE_A | PSTATE_F | PSTATE_I;
         s->cpu->env.cp15.c1_sys = 0;
         s->cpu->env.cp15.c1_coproc = 0;
-        s->cpu->env.cp15.c2_base0 = 0;
+        s->cpu->env.cp15.ttbr0_el1 = 0;
         s->cpu->env.cp15.c3 = 0;
         s->pm_regs[PSSR >> 2] |= 0x8; /* Set STS */
         s->pm_regs[RCSR >> 2] |= 0x8; /* Set GPR */
@@ -310,36 +305,29 @@ static int pxa2xx_pwrmode_write(CPUARMState *env, const ARMCPRegInfo *ri,
         printf("%s: machine entered %s mode\n", __func__,
                pwrmode[value & 7]);
     }
-
-    return 0;
 }
 
-static int pxa2xx_cppmnc_read(CPUARMState *env, const ARMCPRegInfo *ri,
-                              uint64_t *value)
+static uint64_t pxa2xx_cppmnc_read(CPUARMState *env, const ARMCPRegInfo *ri)
 {
     PXA2xxState *s = (PXA2xxState *)ri->opaque;
-    *value = s->pmnc;
-    return 0;
+    return s->pmnc;
 }
 
-static int pxa2xx_cppmnc_write(CPUARMState *env, const ARMCPRegInfo *ri,
-                               uint64_t value)
+static void pxa2xx_cppmnc_write(CPUARMState *env, const ARMCPRegInfo *ri,
+                                uint64_t value)
 {
     PXA2xxState *s = (PXA2xxState *)ri->opaque;
     s->pmnc = value;
-    return 0;
 }
 
-static int pxa2xx_cpccnt_read(CPUARMState *env, const ARMCPRegInfo *ri,
-                              uint64_t *value)
+static uint64_t pxa2xx_cpccnt_read(CPUARMState *env, const ARMCPRegInfo *ri)
 {
     PXA2xxState *s = (PXA2xxState *)ri->opaque;
     if (s->pmnc & 1) {
-        *value = qemu_get_clock_ns(vm_clock);
+        return qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     } else {
-        *value = 0;
+        return 0;
     }
-    return 0;
 }
 
 static const ARMCPRegInfo pxa_cp_reginfo[] = {
@@ -450,8 +438,7 @@ static const VMStateDescription vmstate_pxa2xx_mm = {
     .name = "pxa2xx_mm",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(mm_regs, PXA2xxState, 0x1a),
         VMSTATE_END_OF_LIST()
     }
@@ -506,7 +493,7 @@ typedef struct {
 #define SSCR0_SSE	(1 << 7)
 #define SSCR0_RIM	(1 << 22)
 #define SSCR0_TIM	(1 << 23)
-#define SSCR0_MOD	(1 << 31)
+#define SSCR0_MOD       (1U << 31)
 #define SSCR0_DSS(x)	(((((x) >> 16) & 0x10) | ((x) & 0xf)) + 1)
 #define SSCR1_RIE	(1 << 0)
 #define SSCR1_TIE	(1 << 1)
@@ -742,7 +729,7 @@ static void pxa2xx_ssp_save(QEMUFile *f, void *opaque)
 static int pxa2xx_ssp_load(QEMUFile *f, void *opaque, int version_id)
 {
     PXA2xxSSPState *s = (PXA2xxSSPState *) opaque;
-    int i;
+    int i, v;
 
     s->enable = qemu_get_be32(f);
 
@@ -756,7 +743,11 @@ static int pxa2xx_ssp_load(QEMUFile *f, void *opaque, int version_id)
     qemu_get_8s(f, &s->ssrsa);
     qemu_get_8s(f, &s->ssacd);
 
-    s->rx_level = qemu_get_byte(f);
+    v = qemu_get_byte(f);
+    if (v < 0 || v > ARRAY_SIZE(s->rx_fifo)) {
+        return -EINVAL;
+    }
+    s->rx_level = v;
     s->rx_start = 0;
     for (i = 0; i < s->rx_level; i ++)
         s->rx_fifo[i] = qemu_get_byte(f);
@@ -842,7 +833,7 @@ static inline void pxa2xx_rtc_int_update(PXA2xxRTCState *s)
 
 static void pxa2xx_rtc_hzupdate(PXA2xxRTCState *s)
 {
-    int64_t rt = qemu_get_clock_ms(rtc_clock);
+    int64_t rt = qemu_clock_get_ms(rtc_clock);
     s->last_rcnr += ((rt - s->last_hz) << 15) /
             (1000 * ((s->rttr & 0xffff) + 1));
     s->last_rdcr += ((rt - s->last_hz) << 15) /
@@ -852,7 +843,7 @@ static void pxa2xx_rtc_hzupdate(PXA2xxRTCState *s)
 
 static void pxa2xx_rtc_swupdate(PXA2xxRTCState *s)
 {
-    int64_t rt = qemu_get_clock_ms(rtc_clock);
+    int64_t rt = qemu_clock_get_ms(rtc_clock);
     if (s->rtsr & (1 << 12))
         s->last_swcr += (rt - s->last_sw) / 10;
     s->last_sw = rt;
@@ -860,7 +851,7 @@ static void pxa2xx_rtc_swupdate(PXA2xxRTCState *s)
 
 static void pxa2xx_rtc_piupdate(PXA2xxRTCState *s)
 {
-    int64_t rt = qemu_get_clock_ms(rtc_clock);
+    int64_t rt = qemu_clock_get_ms(rtc_clock);
     if (s->rtsr & (1 << 15))
         s->last_swcr += rt - s->last_pi;
     s->last_pi = rt;
@@ -870,43 +861,43 @@ static inline void pxa2xx_rtc_alarm_update(PXA2xxRTCState *s,
                 uint32_t rtsr)
 {
     if ((rtsr & (1 << 2)) && !(rtsr & (1 << 0)))
-        qemu_mod_timer(s->rtc_hz, s->last_hz +
+        timer_mod(s->rtc_hz, s->last_hz +
                 (((s->rtar - s->last_rcnr) * 1000 *
                   ((s->rttr & 0xffff) + 1)) >> 15));
     else
-        qemu_del_timer(s->rtc_hz);
+        timer_del(s->rtc_hz);
 
     if ((rtsr & (1 << 5)) && !(rtsr & (1 << 4)))
-        qemu_mod_timer(s->rtc_rdal1, s->last_hz +
+        timer_mod(s->rtc_rdal1, s->last_hz +
                 (((s->rdar1 - s->last_rdcr) * 1000 *
                   ((s->rttr & 0xffff) + 1)) >> 15)); /* TODO: fixup */
     else
-        qemu_del_timer(s->rtc_rdal1);
+        timer_del(s->rtc_rdal1);
 
     if ((rtsr & (1 << 7)) && !(rtsr & (1 << 6)))
-        qemu_mod_timer(s->rtc_rdal2, s->last_hz +
+        timer_mod(s->rtc_rdal2, s->last_hz +
                 (((s->rdar2 - s->last_rdcr) * 1000 *
                   ((s->rttr & 0xffff) + 1)) >> 15)); /* TODO: fixup */
     else
-        qemu_del_timer(s->rtc_rdal2);
+        timer_del(s->rtc_rdal2);
 
     if ((rtsr & 0x1200) == 0x1200 && !(rtsr & (1 << 8)))
-        qemu_mod_timer(s->rtc_swal1, s->last_sw +
+        timer_mod(s->rtc_swal1, s->last_sw +
                         (s->swar1 - s->last_swcr) * 10); /* TODO: fixup */
     else
-        qemu_del_timer(s->rtc_swal1);
+        timer_del(s->rtc_swal1);
 
     if ((rtsr & 0x1800) == 0x1800 && !(rtsr & (1 << 10)))
-        qemu_mod_timer(s->rtc_swal2, s->last_sw +
+        timer_mod(s->rtc_swal2, s->last_sw +
                         (s->swar2 - s->last_swcr) * 10); /* TODO: fixup */
     else
-        qemu_del_timer(s->rtc_swal2);
+        timer_del(s->rtc_swal2);
 
     if ((rtsr & 0xc000) == 0xc000 && !(rtsr & (1 << 13)))
-        qemu_mod_timer(s->rtc_pi, s->last_pi +
+        timer_mod(s->rtc_pi, s->last_pi +
                         (s->piar & 0xffff) - s->last_rtcpicr);
     else
-        qemu_del_timer(s->rtc_pi);
+        timer_del(s->rtc_pi);
 }
 
 static inline void pxa2xx_rtc_hz_tick(void *opaque)
@@ -986,16 +977,19 @@ static uint64_t pxa2xx_rtc_read(void *opaque, hwaddr addr,
     case PIAR:
         return s->piar;
     case RCNR:
-        return s->last_rcnr + ((qemu_get_clock_ms(rtc_clock) - s->last_hz) << 15) /
-                (1000 * ((s->rttr & 0xffff) + 1));
+        return s->last_rcnr +
+            ((qemu_clock_get_ms(rtc_clock) - s->last_hz) << 15) /
+            (1000 * ((s->rttr & 0xffff) + 1));
     case RDCR:
-        return s->last_rdcr + ((qemu_get_clock_ms(rtc_clock) - s->last_hz) << 15) /
-                (1000 * ((s->rttr & 0xffff) + 1));
+        return s->last_rdcr +
+            ((qemu_clock_get_ms(rtc_clock) - s->last_hz) << 15) /
+            (1000 * ((s->rttr & 0xffff) + 1));
     case RYCR:
         return s->last_rycr;
     case SWCR:
         if (s->rtsr & (1 << 12))
-            return s->last_swcr + (qemu_get_clock_ms(rtc_clock) - s->last_sw) / 10;
+            return s->last_swcr +
+                (qemu_clock_get_ms(rtc_clock) - s->last_sw) / 10;
         else
             return s->last_swcr;
     default:
@@ -1013,7 +1007,7 @@ static void pxa2xx_rtc_write(void *opaque, hwaddr addr,
 
     switch (addr) {
     case RTTR:
-        if (!(s->rttr & (1 << 31))) {
+        if (!(s->rttr & (1U << 31))) {
             pxa2xx_rtc_hzupdate(s);
             s->rttr = value;
             pxa2xx_rtc_alarm_update(s, s->rtsr);
@@ -1135,14 +1129,14 @@ static int pxa2xx_rtc_init(SysBusDevice *dev)
     s->last_swcr = (tm.tm_hour << 19) |
             (tm.tm_min << 13) | (tm.tm_sec << 7);
     s->last_rtcpicr = 0;
-    s->last_hz = s->last_sw = s->last_pi = qemu_get_clock_ms(rtc_clock);
+    s->last_hz = s->last_sw = s->last_pi = qemu_clock_get_ms(rtc_clock);
 
-    s->rtc_hz    = qemu_new_timer_ms(rtc_clock, pxa2xx_rtc_hz_tick,    s);
-    s->rtc_rdal1 = qemu_new_timer_ms(rtc_clock, pxa2xx_rtc_rdal1_tick, s);
-    s->rtc_rdal2 = qemu_new_timer_ms(rtc_clock, pxa2xx_rtc_rdal2_tick, s);
-    s->rtc_swal1 = qemu_new_timer_ms(rtc_clock, pxa2xx_rtc_swal1_tick, s);
-    s->rtc_swal2 = qemu_new_timer_ms(rtc_clock, pxa2xx_rtc_swal2_tick, s);
-    s->rtc_pi    = qemu_new_timer_ms(rtc_clock, pxa2xx_rtc_pi_tick,    s);
+    s->rtc_hz    = timer_new_ms(rtc_clock, pxa2xx_rtc_hz_tick,    s);
+    s->rtc_rdal1 = timer_new_ms(rtc_clock, pxa2xx_rtc_rdal1_tick, s);
+    s->rtc_rdal2 = timer_new_ms(rtc_clock, pxa2xx_rtc_rdal2_tick, s);
+    s->rtc_swal1 = timer_new_ms(rtc_clock, pxa2xx_rtc_swal1_tick, s);
+    s->rtc_swal2 = timer_new_ms(rtc_clock, pxa2xx_rtc_swal2_tick, s);
+    s->rtc_pi    = timer_new_ms(rtc_clock, pxa2xx_rtc_pi_tick,    s);
 
     sysbus_init_irq(dev, &s->rtc_irq);
 
@@ -1175,7 +1169,6 @@ static const VMStateDescription vmstate_pxa2xx_rtc_regs = {
     .name = "pxa2xx_rtc",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .pre_save = pxa2xx_rtc_pre_save,
     .post_load = pxa2xx_rtc_post_load,
     .fields = (VMStateField[]) {
@@ -1219,8 +1212,14 @@ static const TypeInfo pxa2xx_rtc_sysbus_info = {
 };
 
 /* I2C Interface */
-typedef struct {
-    I2CSlave i2c;
+
+#define TYPE_PXA2XX_I2C_SLAVE "pxa2xx-i2c-slave"
+#define PXA2XX_I2C_SLAVE(obj) \
+    OBJECT_CHECK(PXA2xxI2CSlaveState, (obj), TYPE_PXA2XX_I2C_SLAVE)
+
+typedef struct PXA2xxI2CSlaveState {
+    I2CSlave parent_obj;
+
     PXA2xxI2CState *host;
 } PXA2xxI2CSlaveState;
 
@@ -1235,7 +1234,7 @@ struct PXA2xxI2CState {
 
     MemoryRegion iomem;
     PXA2xxI2CSlaveState *slave;
-    i2c_bus *bus;
+    I2CBus *bus;
     qemu_irq irq;
     uint32_t offset;
     uint32_t region_size;
@@ -1265,7 +1264,7 @@ static void pxa2xx_i2c_update(PXA2xxI2CState *s)
 /* These are only stubs now.  */
 static void pxa2xx_i2c_event(I2CSlave *i2c, enum i2c_event event)
 {
-    PXA2xxI2CSlaveState *slave = FROM_I2C_SLAVE(PXA2xxI2CSlaveState, i2c);
+    PXA2xxI2CSlaveState *slave = PXA2XX_I2C_SLAVE(i2c);
     PXA2xxI2CState *s = slave->host;
 
     switch (event) {
@@ -1289,10 +1288,12 @@ static void pxa2xx_i2c_event(I2CSlave *i2c, enum i2c_event event)
 
 static int pxa2xx_i2c_rx(I2CSlave *i2c)
 {
-    PXA2xxI2CSlaveState *slave = FROM_I2C_SLAVE(PXA2xxI2CSlaveState, i2c);
+    PXA2xxI2CSlaveState *slave = PXA2XX_I2C_SLAVE(i2c);
     PXA2xxI2CState *s = slave->host;
-    if ((s->control & (1 << 14)) || !(s->control & (1 << 6)))
+
+    if ((s->control & (1 << 14)) || !(s->control & (1 << 6))) {
         return 0;
+    }
 
     if (s->status & (1 << 0)) {			/* RWM */
         s->status |= 1 << 6;			/* set ITE */
@@ -1304,10 +1305,12 @@ static int pxa2xx_i2c_rx(I2CSlave *i2c)
 
 static int pxa2xx_i2c_tx(I2CSlave *i2c, uint8_t data)
 {
-    PXA2xxI2CSlaveState *slave = FROM_I2C_SLAVE(PXA2xxI2CSlaveState, i2c);
+    PXA2xxI2CSlaveState *slave = PXA2XX_I2C_SLAVE(i2c);
     PXA2xxI2CState *s = slave->host;
-    if ((s->control & (1 << 14)) || !(s->control & (1 << 6)))
+
+    if ((s->control & (1 << 14)) || !(s->control & (1 << 6))) {
         return 1;
+    }
 
     if (!(s->status & (1 << 0))) {		/* RWM */
         s->status |= 1 << 7;			/* set IRF */
@@ -1322,6 +1325,7 @@ static uint64_t pxa2xx_i2c_read(void *opaque, hwaddr addr,
                                 unsigned size)
 {
     PXA2xxI2CState *s = (PXA2xxI2CState *) opaque;
+    I2CSlave *slave;
 
     addr -= s->offset;
     switch (addr) {
@@ -1330,7 +1334,8 @@ static uint64_t pxa2xx_i2c_read(void *opaque, hwaddr addr,
     case ISR:
         return s->status | (i2c_bus_busy(s->bus) << 2);
     case ISAR:
-        return s->slave->i2c.address;
+        slave = I2C_SLAVE(s->slave);
+        return slave->address;
     case IDBR:
         return s->data;
     case IBMR:
@@ -1405,7 +1410,7 @@ static void pxa2xx_i2c_write(void *opaque, hwaddr addr,
         break;
 
     case ISAR:
-        i2c_set_slave_address(&s->slave->i2c, value & 0x7f);
+        i2c_set_slave_address(I2C_SLAVE(s->slave), value & 0x7f);
         break;
 
     case IDBR:
@@ -1427,9 +1432,8 @@ static const VMStateDescription vmstate_pxa2xx_i2c_slave = {
     .name = "pxa2xx_i2c_slave",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
-        VMSTATE_I2C_SLAVE(i2c, PXA2xxI2CSlaveState),
+    .fields = (VMStateField[]) {
+        VMSTATE_I2C_SLAVE(parent_obj, PXA2xxI2CSlaveState),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -1438,14 +1442,13 @@ static const VMStateDescription vmstate_pxa2xx_i2c = {
     .name = "pxa2xx_i2c",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT16(control, PXA2xxI2CState),
         VMSTATE_UINT16(status, PXA2xxI2CState),
         VMSTATE_UINT8(ibmr, PXA2xxI2CState),
         VMSTATE_UINT8(data, PXA2xxI2CState),
         VMSTATE_STRUCT_POINTER(slave, PXA2xxI2CState,
-                               vmstate_pxa2xx_i2c_slave, PXA2xxI2CSlaveState *),
+                               vmstate_pxa2xx_i2c_slave, PXA2xxI2CSlaveState),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -1467,7 +1470,7 @@ static void pxa2xx_i2c_slave_class_init(ObjectClass *klass, void *data)
 }
 
 static const TypeInfo pxa2xx_i2c_slave_info = {
-    .name          = "pxa2xx-i2c-slave",
+    .name          = TYPE_PXA2XX_I2C_SLAVE,
     .parent        = TYPE_I2C_SLAVE,
     .instance_size = sizeof(PXA2xxI2CSlaveState),
     .class_init    = pxa2xx_i2c_slave_class_init,
@@ -1479,7 +1482,7 @@ PXA2xxI2CState *pxa2xx_i2c_init(hwaddr base,
     DeviceState *dev;
     SysBusDevice *i2c_dev;
     PXA2xxI2CState *s;
-    i2c_bus *i2cbus;
+    I2CBus *i2cbus;
 
     dev = qdev_create(NULL, TYPE_PXA2XX_I2C);
     qdev_prop_set_uint32(dev, "size", region_size + 1);
@@ -1493,8 +1496,8 @@ PXA2xxI2CState *pxa2xx_i2c_init(hwaddr base,
     s = PXA2XX_I2C(i2c_dev);
     /* FIXME: Should the slave device really be on a separate bus?  */
     i2cbus = i2c_init_bus(dev, "dummy");
-    dev = i2c_create_slave(i2cbus, "pxa2xx-i2c-slave", 0);
-    s->slave = FROM_I2C_SLAVE(PXA2xxI2CSlaveState, I2C_SLAVE(dev));
+    dev = i2c_create_slave(i2cbus, TYPE_PXA2XX_I2C_SLAVE, 0);
+    s->slave = PXA2XX_I2C_SLAVE(dev);
     s->slave->host = s;
 
     return s;
@@ -1515,7 +1518,7 @@ static int pxa2xx_i2c_initfn(SysBusDevice *sbd)
     return 0;
 }
 
-i2c_bus *pxa2xx_i2c_bus(PXA2xxI2CState *s)
+I2CBus *pxa2xx_i2c_bus(PXA2xxI2CState *s)
 {
     return s->bus;
 }
@@ -1696,8 +1699,7 @@ static const VMStateDescription vmstate_pxa2xx_i2s = {
     .name = "pxa2xx_i2s",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(control, PXA2xxI2SState, 2),
         VMSTATE_UINT32(status, PXA2xxI2SState),
         VMSTATE_UINT32(mask, PXA2xxI2SState),
@@ -2050,7 +2052,7 @@ PXA2xxState *pxa270_init(MemoryRegion *address_space,
         fprintf(stderr, "Unable to find CPU definition\n");
         exit(1);
     }
-    s->reset = qemu_allocate_irqs(pxa2xx_reset, s, 1)[0];
+    s->reset = qemu_allocate_irq(pxa2xx_reset, s, 0);
 
     /* SDRAM & Internal Memory Storage */
     memory_region_init_ram(&s->sdram, NULL, "pxa270.sdram", sdram_size);
@@ -2181,7 +2183,7 @@ PXA2xxState *pxa255_init(MemoryRegion *address_space, unsigned int sdram_size)
         fprintf(stderr, "Unable to find CPU definition\n");
         exit(1);
     }
-    s->reset = qemu_allocate_irqs(pxa2xx_reset, s, 1)[0];
+    s->reset = qemu_allocate_irq(pxa2xx_reset, s, 0);
 
     /* SDRAM & Internal Memory Storage */
     memory_region_init_ram(&s->sdram, NULL, "pxa255.sdram", sdram_size);

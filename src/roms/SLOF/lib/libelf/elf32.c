@@ -13,9 +13,10 @@
 /*
  * 32-bit ELF loader
  */
- 
+#include <stdio.h> 
 #include <string.h>
 #include <libelf.h>
+#include <byteorder.h>
 
 struct ehdr32 {
 	uint32_t ei_ident;
@@ -95,15 +96,17 @@ elf_load_segments32(void *file_addr, signed long offset,
 	/* Calculate program header address */
 	struct phdr32 *phdr = get_phdr32(file_addr);
 	int i;
-	signed int virt2phys = 0;	/* Offset between virtual and physical */
 
 	/* loop e_phnum times */
 	for (i = 0; i <= ehdr->e_phnum; i++) {
 		/* PT_LOAD ? */
 		if (phdr->p_type == 1) {
-			if (!virt2phys) {
-				virt2phys = phdr->p_paddr - phdr->p_vaddr;
+			if (phdr->p_paddr != phdr->p_vaddr) {
+				printf("ELF32: VirtAddr(%lx) != PhysAddr(%lx) not supported, aborting\n",
+					(long)phdr->p_vaddr, (long)phdr->p_paddr);
+				return 0;
 			}
+
 			/* copy segment */
 			load_segment(file_addr, phdr, offset, pre_load,
 			             post_load);
@@ -114,7 +117,7 @@ elf_load_segments32(void *file_addr, signed long offset,
 
 	/* Entry point is always a virtual address, so translate it
 	 * to physical before returning it */
-	return ehdr->e_entry + virt2phys;
+	return ehdr->e_entry;
 }
 
 /**
@@ -141,4 +144,50 @@ elf_get_base_addr32(void *file_addr)
 	}
 
 	return 0;
+}
+
+uint32_t elf_get_eflags_32(void *file_addr)
+{
+	struct ehdr32 *ehdr = (struct ehdr32 *) file_addr;
+
+	return ehdr->e_flags;
+}
+
+void
+elf_byteswap_header32(void *file_addr)
+{
+	struct ehdr32 *ehdr = (struct ehdr32 *) file_addr;
+	struct phdr32 *phdr;
+	int i;
+
+	bswap_16p(&ehdr->e_type);
+	bswap_16p(&ehdr->e_machine);
+	bswap_32p(&ehdr->e_version);
+	bswap_32p(&ehdr->e_entry);
+	bswap_32p(&ehdr->e_phoff);
+	bswap_32p(&ehdr->e_shoff);
+	bswap_32p(&ehdr->e_flags);
+	bswap_16p(&ehdr->e_ehsize);
+	bswap_16p(&ehdr->e_phentsize);
+	bswap_16p(&ehdr->e_phnum);
+	bswap_16p(&ehdr->e_shentsize);
+	bswap_16p(&ehdr->e_shnum);
+	bswap_16p(&ehdr->e_shstrndx);
+
+	phdr = get_phdr32(file_addr);
+
+	/* loop e_phnum times */
+	for (i = 0; i <= ehdr->e_phnum; i++) {
+		bswap_32p(&phdr->p_type);
+		bswap_32p(&phdr->p_offset);
+		bswap_32p(&phdr->p_vaddr);
+		bswap_32p(&phdr->p_paddr);
+		bswap_32p(&phdr->p_filesz);
+		bswap_32p(&phdr->p_memsz);
+		bswap_32p(&phdr->p_flags);
+		bswap_32p(&phdr->p_align);
+
+		/* step to next header */
+		phdr = (struct phdr32 *)(((uint8_t *)phdr) + ehdr->e_phentsize);
+	}
 }

@@ -199,7 +199,6 @@ static VMStateDescription vmstate_strongarm_pic_regs = {
     .name = "strongarm_pic",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .post_load = strongarm_pic_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(pending, StrongARMPICState),
@@ -269,7 +268,7 @@ static inline void strongarm_rtc_int_update(StrongARMRTCState *s)
 
 static void strongarm_rtc_hzupdate(StrongARMRTCState *s)
 {
-    int64_t rt = qemu_get_clock_ms(rtc_clock);
+    int64_t rt = qemu_clock_get_ms(rtc_clock);
     s->last_rcnr += ((rt - s->last_hz) << 15) /
             (1000 * ((s->rttr & 0xffff) + 1));
     s->last_hz = rt;
@@ -278,17 +277,17 @@ static void strongarm_rtc_hzupdate(StrongARMRTCState *s)
 static inline void strongarm_rtc_timer_update(StrongARMRTCState *s)
 {
     if ((s->rtsr & RTSR_HZE) && !(s->rtsr & RTSR_HZ)) {
-        qemu_mod_timer(s->rtc_hz, s->last_hz + 1000);
+        timer_mod(s->rtc_hz, s->last_hz + 1000);
     } else {
-        qemu_del_timer(s->rtc_hz);
+        timer_del(s->rtc_hz);
     }
 
     if ((s->rtsr & RTSR_ALE) && !(s->rtsr & RTSR_AL)) {
-        qemu_mod_timer(s->rtc_alarm, s->last_hz +
+        timer_mod(s->rtc_alarm, s->last_hz +
                 (((s->rtar - s->last_rcnr) * 1000 *
                   ((s->rttr & 0xffff) + 1)) >> 15));
     } else {
-        qemu_del_timer(s->rtc_alarm);
+        timer_del(s->rtc_alarm);
     }
 }
 
@@ -322,7 +321,7 @@ static uint64_t strongarm_rtc_read(void *opaque, hwaddr addr,
         return s->rtar;
     case RCNR:
         return s->last_rcnr +
-                ((qemu_get_clock_ms(rtc_clock) - s->last_hz) << 15) /
+                ((qemu_clock_get_ms(rtc_clock) - s->last_hz) << 15) /
                 (1000 * ((s->rttr & 0xffff) + 1));
     default:
         printf("%s: Bad register 0x" TARGET_FMT_plx "\n", __func__, addr);
@@ -388,10 +387,10 @@ static int strongarm_rtc_init(SysBusDevice *dev)
     qemu_get_timedate(&tm, 0);
 
     s->last_rcnr = (uint32_t) mktimegm(&tm);
-    s->last_hz = qemu_get_clock_ms(rtc_clock);
+    s->last_hz = qemu_clock_get_ms(rtc_clock);
 
-    s->rtc_alarm = qemu_new_timer_ms(rtc_clock, strongarm_rtc_alarm_tick, s);
-    s->rtc_hz = qemu_new_timer_ms(rtc_clock, strongarm_rtc_hz_tick, s);
+    s->rtc_alarm = timer_new_ms(rtc_clock, strongarm_rtc_alarm_tick, s);
+    s->rtc_hz = timer_new_ms(rtc_clock, strongarm_rtc_hz_tick, s);
 
     sysbus_init_irq(dev, &s->rtc_irq);
     sysbus_init_irq(dev, &s->rtc_hz_irq);
@@ -424,7 +423,6 @@ static const VMStateDescription vmstate_strongarm_rtc_regs = {
     .name = "strongarm-rtc",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .pre_save = strongarm_rtc_pre_save,
     .post_load = strongarm_rtc_post_load,
     .fields = (VMStateField[]) {
@@ -482,7 +480,6 @@ struct StrongARMGPIOInfo {
     uint32_t rising;
     uint32_t falling;
     uint32_t status;
-    uint32_t gpsr;
     uint32_t gafr;
 
     uint32_t prev_level;
@@ -546,14 +543,14 @@ static uint64_t strongarm_gpio_read(void *opaque, hwaddr offset,
         return s->dir;
 
     case GPSR:        /* GPIO Pin-Output Set registers */
-        DPRINTF("%s: Read from a write-only register 0x" TARGET_FMT_plx "\n",
-                        __func__, offset);
-        return s->gpsr;    /* Return last written value.  */
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "strongarm GPIO: read from write only register GPSR\n");
+        return 0;
 
     case GPCR:        /* GPIO Pin-Output Clear registers */
-        DPRINTF("%s: Read from a write-only register 0x" TARGET_FMT_plx "\n",
-                        __func__, offset);
-        return 31337;        /* Specified as unpredictable in the docs.  */
+        qemu_log_mask(LOG_GUEST_ERROR,
+                      "strongarm GPIO: read from write only register GPCR\n");
+        return 0;
 
     case GRER:        /* GPIO Rising-Edge Detect Enable registers */
         return s->rising;
@@ -592,7 +589,6 @@ static void strongarm_gpio_write(void *opaque, hwaddr offset,
     case GPSR:        /* GPIO Pin-Output Set registers */
         s->olevel |= value;
         strongarm_gpio_handler_update(s);
-        s->gpsr = value;
         break;
 
     case GPCR:        /* GPIO Pin-Output Clear registers */
@@ -670,7 +666,6 @@ static const VMStateDescription vmstate_strongarm_gpio_regs = {
     .name = "strongarm-gpio",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(ilevel, StrongARMGPIOInfo),
         VMSTATE_UINT32(olevel, StrongARMGPIOInfo),
@@ -679,6 +674,7 @@ static const VMStateDescription vmstate_strongarm_gpio_regs = {
         VMSTATE_UINT32(falling, StrongARMGPIOInfo),
         VMSTATE_UINT32(status, StrongARMGPIOInfo),
         VMSTATE_UINT32(gafr, StrongARMGPIOInfo),
+        VMSTATE_UINT32(prev_level, StrongARMGPIOInfo),
         VMSTATE_END_OF_LIST(),
     },
 };
@@ -690,6 +686,7 @@ static void strongarm_gpio_class_init(ObjectClass *klass, void *data)
 
     k->init = strongarm_gpio_initfn;
     dc->desc = "StrongARM GPIO controller";
+    dc->vmsd = &vmstate_strongarm_gpio_regs;
 }
 
 static const TypeInfo strongarm_gpio_info = {
@@ -842,7 +839,6 @@ static const VMStateDescription vmstate_strongarm_ppc_regs = {
     .name = "strongarm-ppc",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(ilevel, StrongARMPPCInfo),
         VMSTATE_UINT32(olevel, StrongARMPPCInfo),
@@ -850,6 +846,7 @@ static const VMStateDescription vmstate_strongarm_ppc_regs = {
         VMSTATE_UINT32(ppar, StrongARMPPCInfo),
         VMSTATE_UINT32(psdr, StrongARMPPCInfo),
         VMSTATE_UINT32(ppfr, StrongARMPPCInfo),
+        VMSTATE_UINT32(prev_level, StrongARMPPCInfo),
         VMSTATE_END_OF_LIST(),
     },
 };
@@ -861,6 +858,7 @@ static void strongarm_ppc_class_init(ObjectClass *klass, void *data)
 
     k->init = strongarm_ppc_init;
     dc->desc = "StrongARM PPC controller";
+    dc->vmsd = &vmstate_strongarm_ppc_regs;
 }
 
 static const TypeInfo strongarm_ppc_info = {
@@ -1085,8 +1083,8 @@ static void strongarm_uart_receive(void *opaque, const uint8_t *buf, int size)
     }
 
     /* call the timeout receive callback in 3 char transmit time */
-    qemu_mod_timer(s->rx_timeout_timer,
-                    qemu_get_clock_ns(vm_clock) + s->char_transmit_time * 3);
+    timer_mod(s->rx_timeout_timer,
+                    qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->char_transmit_time * 3);
 
     strongarm_uart_update_status(s);
     strongarm_uart_update_int_status(s);
@@ -1107,7 +1105,7 @@ static void strongarm_uart_event(void *opaque, int event)
 static void strongarm_uart_tx(void *opaque)
 {
     StrongARMUARTState *s = opaque;
-    uint64_t new_xmit_ts = qemu_get_clock_ns(vm_clock);
+    uint64_t new_xmit_ts = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
 
     if (s->utcr3 & UTCR3_LBM) /* loopback */ {
         strongarm_uart_receive(s, &s->tx_fifo[s->tx_start], 1);
@@ -1118,7 +1116,7 @@ static void strongarm_uart_tx(void *opaque)
     s->tx_start = (s->tx_start + 1) % 8;
     s->tx_len--;
     if (s->tx_len) {
-        qemu_mod_timer(s->tx_timer, new_xmit_ts + s->char_transmit_time);
+        timer_mod(s->tx_timer, new_xmit_ts + s->char_transmit_time);
     }
     strongarm_uart_update_status(s);
     strongarm_uart_update_int_status(s);
@@ -1237,8 +1235,8 @@ static int strongarm_uart_init(SysBusDevice *dev)
     sysbus_init_mmio(dev, &s->iomem);
     sysbus_init_irq(dev, &s->irq);
 
-    s->rx_timeout_timer = qemu_new_timer_ns(vm_clock, strongarm_uart_rx_to, s);
-    s->tx_timer = qemu_new_timer_ns(vm_clock, strongarm_uart_tx, s);
+    s->rx_timeout_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, strongarm_uart_rx_to, s);
+    s->tx_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, strongarm_uart_tx, s);
 
     if (s->chr) {
         qemu_chr_add_handlers(s->chr,
@@ -1282,8 +1280,8 @@ static int strongarm_uart_post_load(void *opaque, int version_id)
 
     /* restart rx timeout timer */
     if (s->rx_len) {
-        qemu_mod_timer(s->rx_timeout_timer,
-                qemu_get_clock_ns(vm_clock) + s->char_transmit_time * 3);
+        timer_mod(s->rx_timeout_timer,
+                qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + s->char_transmit_time * 3);
     }
 
     return 0;
@@ -1293,7 +1291,6 @@ static const VMStateDescription vmstate_strongarm_uart_regs = {
     .name = "strongarm-uart",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .post_load = strongarm_uart_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_UINT8(utcr0, StrongARMUARTState),
@@ -1553,7 +1550,6 @@ static const VMStateDescription vmstate_strongarm_ssp_regs = {
     .name = "strongarm-ssp",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .post_load = strongarm_ssp_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_UINT16_ARRAY(sscr, StrongARMSSPState, 2),
@@ -1588,7 +1584,6 @@ StrongARMState *sa1110_init(MemoryRegion *sysmem,
                             unsigned int sdram_size, const char *rev)
 {
     StrongARMState *s;
-    qemu_irq *pic;
     int i;
 
     s = g_malloc0(sizeof(StrongARMState));
@@ -1613,9 +1608,10 @@ StrongARMState *sa1110_init(MemoryRegion *sysmem,
     vmstate_register_ram_global(&s->sdram);
     memory_region_add_subregion(sysmem, SA_SDCS0, &s->sdram);
 
-    pic = arm_pic_init_cpu(s->cpu);
     s->pic = sysbus_create_varargs("strongarm_pic", 0x90050000,
-                    pic[ARM_PIC_CPU_IRQ], pic[ARM_PIC_CPU_FIQ], NULL);
+                    qdev_get_gpio_in(DEVICE(s->cpu), ARM_CPU_IRQ),
+                    qdev_get_gpio_in(DEVICE(s->cpu), ARM_CPU_FIQ),
+                    NULL);
 
     sysbus_create_varargs("pxa25x-timer", 0x90000000,
                     qdev_get_gpio_in(s->pic, SA_PIC_OSTC0),

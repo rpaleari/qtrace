@@ -152,6 +152,7 @@ my-space pci-class-name type cr
 \ and scan the bus(es) beyond that Bridge
 : pci-bridge-probe-amd8111 ( addr -- )
    dup pci-bridge-set-bases                        \ SetUp all Base Registers
+   dup pci-bridge-range-props                      \ Setup temporary "range
    pci-bus-number 1+ TO pci-bus-number             \ increase number of busses found
    pci-device-vec-len 1+ TO pci-device-vec-len     \ increase the device-slot vector depth
    dup                                             \ stack config-addr for pci-bus!

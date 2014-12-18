@@ -17,6 +17,7 @@ cod(hv-reg-crq)
 cod(hv-free-crq)
 cod(hv-send-crq)
 cod(hv-put-tce)
+cod(check-and-patch-sc1)
 
 cod(RB@)
 cod(RB!)
@@ -28,3 +29,5 @@ cod(RX@)
 cod(RX!)
 
 cod(hv-logical-memop)
+cod(hv-cas)
+cod(get-print-version)

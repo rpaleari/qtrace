@@ -6,12 +6,13 @@
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
-#include "vgabios.h" // handle_104f
-#include "config.h" // CONFIG_*
-#include "bregs.h" // struct bregs
-#include "vbe.h" // struct vbe_info
-#include "util.h" // dprintf
 #include "biosvar.h" // GET_GLOBAL
+#include "bregs.h" // struct bregs
+#include "config.h" // CONFIG_*
+#include "output.h" // dprintf
+#include "std/vbe.h" // struct vbe_info
+#include "string.h" // memset_far
+#include "vgabios.h" // handle_104f
 #include "vgahw.h" // vgahw_set_mode
 
 u32 VBE_total_memory VAR16 = 256 * 1024;
@@ -144,6 +145,10 @@ vbe_104f01(struct bregs *regs)
             mode_attr |= VBE_MODE_ATTRIBUTE_LINEAR_FRAME_BUFFER_MODE;
         break;
     }
+    if (pages > 128)
+        pages = 128;
+    if (pages < 2)
+        pages++;
     SET_FARVAR(seg, info->mode_attributes, mode_attr);
     SET_FARVAR(seg, info->planes, planes);
     SET_FARVAR(seg, info->pages, pages - 1);
@@ -223,29 +228,14 @@ vbe_104f04(struct bregs *regs)
     u16 seg = regs->es;
     void *data = (void*)(regs->bx+0);
     u16 states = regs->cx;
-    if (states & ~0x0f)
+    u8 cmd = regs->dl;
+    if (states & ~0x0f || cmd > 2)
         goto fail;
-    int ret;
-    switch (regs->dl) {
-    case 0x00:
-        ret = vgahw_size_state(states);
-        if (ret < 0)
-            goto fail;
+    int ret = vgahw_save_restore(states | (cmd<<8), seg, data);
+    if (ret < 0)
+        goto fail;
+    if (cmd == 0)
         regs->bx = ret / 64;
-        break;
-    case 0x01:
-        ret = vgahw_save_state(seg, data, states);
-        if (ret)
-            goto fail;
-        break;
-    case 0x02:
-        ret = vgahw_restore_state(seg, data, states);
-        if (ret)
-            goto fail;
-        break;
-    default:
-        goto fail;
-    }
     regs->ax = 0x004f;
     return;
 fail:

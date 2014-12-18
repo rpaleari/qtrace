@@ -124,39 +124,4 @@ C_ENTRY(_exit)
 	b	the_end
 
 
-C_ENTRY(undo_exception)
-/* 
-	unwind stack
-*/
-	ld	r3,.exception_stack_frame_toc@toc(r2)
-	ld	r1,0(r3)
-
-	ld 	r14,0x130(r1)
-	mtctr	r14
-
-//	restore regs same as in _exception_handler:
-
-	.irp i, 2,3,4,5,6,7,8,9,10,12,13,14,15,16, \
-	        17, 18, 19, 20, 21, 22, 23, 24, 25, 26, \
-		27, 28, 29, 30, 31
-	ld	r\i, 0x30+\i*8 (r1)
-	.endr
-	addi	r1, r1, 0x130
-
-//	restore regs as in default handler 
-
-	ld	r0, 0x48(r1)	
-	mtsrr0	r0
-	ld	r0, 0x50(r1)	
-	mtsrr1	r0
-// 20
-	ld	r0, 0x38(r1)
-	mtlr	r0	
-	ld	r0, 0x30(r1)
-	ld	r11, 0x40(r1)
-// 30
-	addi 	r1, r1, 0x58
-
-	rfid
-
-	.lcomm	_stack,STACKSIZE,16
+       .lcomm  _stack,STACKSIZE,16

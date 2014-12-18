@@ -32,6 +32,7 @@
 #include "boot.h"
 #include "sysemu/blockdev.h"
 #include "exec/address-spaces.h"
+#include "sysemu/qtest.h"
 
 #define D(x)
 #define DNAND(x)
@@ -242,18 +243,18 @@ static const MemoryRegionOps gpio_ops = {
 static struct cris_load_info li;
 
 static
-void axisdev88_init(QEMUMachineInitArgs *args)
+void axisdev88_init(MachineState *machine)
 {
-    ram_addr_t ram_size = args->ram_size;
-    const char *cpu_model = args->cpu_model;
-    const char *kernel_filename = args->kernel_filename;
-    const char *kernel_cmdline = args->kernel_cmdline;
+    ram_addr_t ram_size = machine->ram_size;
+    const char *cpu_model = machine->cpu_model;
+    const char *kernel_filename = machine->kernel_filename;
+    const char *kernel_cmdline = machine->kernel_cmdline;
     CRISCPU *cpu;
     CPUCRISState *env;
     DeviceState *dev;
     SysBusDevice *s;
     DriveInfo *nand;
-    qemu_irq irq[30], nmi[2], *cpu_irq;
+    qemu_irq irq[30], nmi[2];
     void *etraxfs_dmac;
     struct etraxfs_dma_client *dma_eth;
     int i;
@@ -295,15 +296,14 @@ void axisdev88_init(QEMUMachineInitArgs *args)
                                 &gpio_state.iomem);
 
 
-    cpu_irq = cris_pic_init_cpu(env);
     dev = qdev_create(NULL, "etraxfs,pic");
     /* FIXME: Is there a proper way to signal vectors to the CPU core?  */
     qdev_prop_set_ptr(dev, "interrupt_vector", &env->interrupt_vector);
     qdev_init_nofail(dev);
     s = SYS_BUS_DEVICE(dev);
     sysbus_mmio_map(s, 0, 0x3001c000);
-    sysbus_connect_irq(s, 0, cpu_irq[0]);
-    sysbus_connect_irq(s, 1, cpu_irq[1]);
+    sysbus_connect_irq(s, 0, qdev_get_gpio_in(DEVICE(cpu), CRIS_CPU_IRQ));
+    sysbus_connect_irq(s, 1, qdev_get_gpio_in(DEVICE(cpu), CRIS_CPU_NMI));
     for (i = 0; i < 30; i++) {
         irq[i] = qdev_get_gpio_in(dev, i);
     }
@@ -340,14 +340,14 @@ void axisdev88_init(QEMUMachineInitArgs *args)
                              irq[0x14 + i]);
     }
 
-    if (!kernel_filename) {
+    if (kernel_filename) {
+        li.image_filename = kernel_filename;
+        li.cmdline = kernel_cmdline;
+        cris_load_image(cpu, &li);
+    } else if (!qtest_enabled()) {
         fprintf(stderr, "Kernel image must be specified\n");
         exit(1);
     }
-
-    li.image_filename = kernel_filename;
-    li.cmdline = kernel_cmdline;
-    cris_load_image(cpu, &li);
 }
 
 static QEMUMachine axisdev88_machine = {
@@ -355,7 +355,6 @@ static QEMUMachine axisdev88_machine = {
     .desc = "AXIS devboard 88",
     .init = axisdev88_init,
     .is_default = 1,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void axisdev88_machine_init(void)

@@ -12,7 +12,7 @@
 
 #include "qtrace/taint/shadow.h"
 
-const int NUM_CPU_REGS = 16;
+const int NUM_CPU_REGS = 32;
 const int NUM_TMP_REGS = 512;
 
 //
@@ -51,6 +51,7 @@ class TaintEngine {
   // Copy taint labels to the provided set
   void copyMemoryLabels(std::set<int> &labels,
                         target_ulong addr, unsigned int size = 1) const;
+  void copyRegisterLabels(std::set<int> &labels, target_ulong regno);
 
   // Check taintedness
   bool isTaintedMemory(target_ulong addr, unsigned int size = 1) const;

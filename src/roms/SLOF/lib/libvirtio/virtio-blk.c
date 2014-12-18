@@ -11,11 +11,12 @@
  *****************************************************************************/
 
 #include <stdio.h>
+#include <cpu.h>
+#include <helpers.h>
 #include "virtio.h"
 #include "virtio-blk.h"
 
-#define sync()  asm volatile (" sync \n" ::: "memory")
-
+#define DEFAULT_SECTOR_SIZE 512
 
 /**
  * Initialize virtio-block device.
@@ -25,6 +26,8 @@ int
 virtioblk_init(struct virtio_device *dev)
 {
 	struct vring_avail *vq_avail;
+	int blk_size = DEFAULT_SECTOR_SIZE;
+	int features;
 
 	/* Reset device */
 	// XXX That will clear the virtq base. We need to move
@@ -38,8 +41,8 @@ virtioblk_init(struct virtio_device *dev)
 	/* Tell HV that we know how to drive the device. */
 	virtio_set_status(dev, VIRTIO_STAT_ACKNOWLEDGE|VIRTIO_STAT_DRIVER);
 
-	/* Device specific setup - we do not support special features right now */
-	virtio_set_guest_features(dev,  0);
+	/* Device specific setup - we support F_BLK_SIZE */
+	virtio_set_guest_features(dev,  VIRTIO_BLK_F_BLK_SIZE);
 
 	vq_avail = virtio_get_vring_avail(dev, 0);
 	vq_avail->flags = VRING_AVAIL_F_NO_INTERRUPT;
@@ -49,7 +52,14 @@ virtioblk_init(struct virtio_device *dev)
 	virtio_set_status(dev, VIRTIO_STAT_ACKNOWLEDGE|VIRTIO_STAT_DRIVER
 				|VIRTIO_STAT_DRIVER_OK);
 
-	return 0;
+	virtio_get_host_features(dev, &features);
+	if (features & VIRTIO_BLK_F_BLK_SIZE) {
+		blk_size = virtio_get_config(dev,
+				offset_of(struct virtio_blk_cfg, blk_size),
+				sizeof(blk_size));
+	}
+
+	return blk_size;
 }
 
 
@@ -80,25 +90,36 @@ int
 virtioblk_read(struct virtio_device *dev, char *buf, long blocknum, long cnt)
 {
 	struct vring_desc *desc;
-	int id, i;
+	int id;
 	static struct virtio_blk_req blkhdr;
 	//struct virtio_blk_config *blkconf;
 	uint64_t capacity;
-	uint32_t vq_size;
+	uint32_t vq_size, time;
 	struct vring_desc *vq_desc;		/* Descriptor vring */
 	struct vring_avail *vq_avail;		/* "Available" vring */
 	struct vring_used *vq_used;		/* "Used" vring */
 	volatile uint8_t status = -1;
 	volatile uint16_t *current_used_idx;
 	uint16_t last_used_idx;
+	int blk_size = DEFAULT_SECTOR_SIZE;
 
 	//printf("virtioblk_read: dev=%p buf=%p blocknum=%li count=%li\n",
 	//	dev, buf, blocknum, cnt);
 
 	/* Check whether request is within disk capacity */
-	capacity = virtio_get_config(dev, 0, sizeof(capacity));
+	capacity = virtio_get_config(dev,
+			offset_of(struct virtio_blk_cfg, capacity),
+			sizeof(capacity));
 	if (blocknum + cnt - 1 > capacity) {
 		puts("virtioblk_read: Access beyond end of device!");
+		return 0;
+	}
+
+	blk_size = virtio_get_config(dev,
+			offset_of(struct virtio_blk_cfg, blk_size),
+			sizeof(blk_size));
+	if (blk_size % DEFAULT_SECTOR_SIZE) {
+		fprintf(stderr, "virtio-blk: Unaligned sector read %d\n", blk_size);
 		return 0;
 	}
 
@@ -113,7 +134,7 @@ virtioblk_read(struct virtio_device *dev, char *buf, long blocknum, long cnt)
 	/* Set up header */
 	blkhdr.type = VIRTIO_BLK_T_IN | VIRTIO_BLK_T_BARRIER;
 	blkhdr.ioprio = 1;
-	blkhdr.sector = blocknum;
+	blkhdr.sector = blocknum * blk_size / DEFAULT_SECTOR_SIZE;
 
 	/* Determine descriptor index */
 	id = (vq_avail->idx * 3) % vq_size;
@@ -128,7 +149,7 @@ virtioblk_read(struct virtio_device *dev, char *buf, long blocknum, long cnt)
 	/* Set up virtqueue descriptor for data */
 	desc = &vq_desc[(id + 1) % vq_size];
 	desc->addr = (uint64_t)buf;
-	desc->len = cnt * 512;
+	desc->len = cnt * blk_size;
 	desc->flags = VRING_DESC_F_NEXT | VRING_DESC_F_WRITE;
 	desc->next = (id + 2) % vq_size;
 
@@ -140,17 +161,19 @@ virtioblk_read(struct virtio_device *dev, char *buf, long blocknum, long cnt)
 	desc->next = 0;
 
 	vq_avail->ring[vq_avail->idx % vq_size] = id;
-	sync();
+	mb();
 	vq_avail->idx += 1;
 
 	/* Tell HV that the queue is ready */
 	virtio_queue_notify(dev, 0);
 
 	/* Wait for host to consume the descriptor */
-	i = 10000000;
-	while (*current_used_idx == last_used_idx && i-- > 0) {
+	time = SLOF_GetTimer() + VIRTIO_TIMEOUT;
+	while (*current_used_idx == last_used_idx) {
 		// do something better
-		sync();
+		mb();
+		if (time < SLOF_GetTimer())
+			break;
 	}
 
 	if (status == 0)

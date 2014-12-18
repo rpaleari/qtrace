@@ -74,7 +74,10 @@ cod(START-RTAS)
 
 
 cod(FLUSHCACHE)
-
+// Bit map allocator
+cod(BM-ALLOCATOR-INIT)
+cod(BM-ALLOC)
+cod(BM-FREE)
 
 // Hang.
 cod(CRASH)

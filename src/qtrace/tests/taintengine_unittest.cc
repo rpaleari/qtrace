@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "../taintengine.h"
+#include "taint/taintengine.h"
 
 const int TEST_TAINTLABEL = 0x0badb00b;
 

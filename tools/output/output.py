@@ -19,6 +19,9 @@ class OutputGenerator(object):
         # Taint label to system call object map
         self.__taintmap = {}
 
+        # Does this trace has taint information?
+        self.__has_taint = None
+
     def __del__(self):
         self.__stream.write(self._epilogue())
 
@@ -44,26 +47,31 @@ class OutputGenerator(object):
 
     def getSyscallFromLabel(self, label):
         """
-        Return the system call object that defines taint label "label", or None if
-        not found.
+        Return the system call object that defines taint label "label".
+
+        This method returns None if no matching syscall is found.
         """
         return self.__taintmap.get(label, None)
 
     def __updateTaintMap(self, sysobj):
         """
-        Update the taint labels map, associating labels defined by system call
-        object "sysobj" with the object itself.
+        Update the taint map according to the provided system call.
+
+        This method update the taint labels map, associating labels defined by
+        system call object "sysobj" with the object itself.
         """
         outlabels = [sysobj.obj.taintlabel_retval, ]
         outlabels.extend(sysobj.getTaintDefs())
         for label in outlabels:
             defobj = self.__taintmap.get(label, None)
-            assert defobj is None or defobj.obj.id == sysobj.obj.id
+            assert (defobj is None or defobj.obj.id == sysobj.obj.id or
+                    not self.__has_taint)
             self.__taintmap[label] = sysobj
 
     def visit(self, obj):
         t = type(obj)
         if t == trace.reader.TraceHeader:
+            self.__has_taint = obj.hastaint
             s = self._visitHeader(obj)
         elif t == trace.syscall.Syscall:
             self.__updateTaintMap(obj)

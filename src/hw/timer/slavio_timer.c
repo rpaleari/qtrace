@@ -27,6 +27,7 @@
 #include "hw/ptimer.h"
 #include "hw/sysbus.h"
 #include "trace.h"
+#include "qemu/main-loop.h"
 
 /*
  * Registers of hardware timer in sun4m.
@@ -50,7 +51,7 @@ typedef struct CPUTimerState {
     ptimer_state *timer;
     uint32_t count, counthigh, reached;
     /* processor only */
-    uint32_t running;
+    uint32_t run;
     uint64_t limit;
 } CPUTimerState;
 
@@ -176,7 +177,7 @@ static uint64_t slavio_timer_mem_readl(void *opaque, hwaddr addr,
         // only available in processor counter/timer
         // read start/stop status
         if (timer_index > 0) {
-            ret = t->running;
+            ret = t->run;
         } else {
             ret = 0;
         }
@@ -259,16 +260,15 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
     case TIMER_STATUS:
         if (slavio_timer_is_user(tc)) {
             // start/stop user counter
-            if ((val & 1) && !t->running) {
+            if (val & 1) {
                 trace_slavio_timer_mem_writel_status_start(timer_index);
                 ptimer_run(t->timer, 0);
-                t->running = 1;
-            } else if (!(val & 1) && t->running) {
+            } else {
                 trace_slavio_timer_mem_writel_status_stop(timer_index);
                 ptimer_stop(t->timer);
-                t->running = 0;
             }
         }
+        t->run = val & 1;
         break;
     case TIMER_MODE:
         if (timer_index == 0) {
@@ -283,8 +283,9 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
                     if (val & processor) { // counter -> user timer
                         qemu_irq_lower(curr_timer->irq);
                         // counters are always running
-                        ptimer_stop(curr_timer->timer);
-                        curr_timer->running = 0;
+                        if (!curr_timer->run) {
+                            ptimer_stop(curr_timer->timer);
+                        }
                         // user timer limit is always the same
                         curr_timer->limit = TIMER_MAX_COUNT64;
                         ptimer_set_limit(curr_timer->timer,
@@ -295,13 +296,8 @@ static void slavio_timer_mem_writel(void *opaque, hwaddr addr,
                         s->cputimer_mode |= processor;
                         trace_slavio_timer_mem_writel_mode_user(timer_index);
                     } else { // user timer -> counter
-                        // stop the user timer if it is running
-                        if (curr_timer->running) {
-                            ptimer_stop(curr_timer->timer);
-                        }
                         // start the counter
                         ptimer_run(curr_timer->timer, 0);
-                        curr_timer->running = 1;
                         // clear this processors user timer bit in config
                         // register
                         s->cputimer_mode &= ~processor;
@@ -333,13 +329,12 @@ static const VMStateDescription vmstate_timer = {
     .name ="timer",
     .version_id = 3,
     .minimum_version_id = 3,
-    .minimum_version_id_old = 3,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT64(limit, CPUTimerState),
         VMSTATE_UINT32(count, CPUTimerState),
         VMSTATE_UINT32(counthigh, CPUTimerState),
         VMSTATE_UINT32(reached, CPUTimerState),
-        VMSTATE_UINT32(running, CPUTimerState),
+        VMSTATE_UINT32(run    , CPUTimerState),
         VMSTATE_PTIMER(timer, CPUTimerState),
         VMSTATE_END_OF_LIST()
     }
@@ -349,8 +344,7 @@ static const VMStateDescription vmstate_slavio_timer = {
     .name ="slavio_timer",
     .version_id = 3,
     .minimum_version_id = 3,
-    .minimum_version_id_old = 3,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_STRUCT_ARRAY(cputimer, SLAVIO_TIMERState, MAX_CPUS + 1, 3,
                              vmstate_timer, CPUTimerState),
         VMSTATE_END_OF_LIST()
@@ -372,7 +366,7 @@ static void slavio_timer_reset(DeviceState *d)
             ptimer_set_limit(curr_timer->timer,
                              LIMIT_TO_PERIODS(TIMER_MAX_COUNT32), 1);
             ptimer_run(curr_timer->timer, 0);
-            curr_timer->running = 1;
+            curr_timer->run = 1;
         }
     }
     s->cputimer_mode = 0;

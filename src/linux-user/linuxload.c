@@ -93,8 +93,7 @@ static int prepare_binprm(struct linux_binprm *bprm)
 abi_ulong loader_build_argptr(int envc, int argc, abi_ulong sp,
                               abi_ulong stringp, int push_ptr)
 {
-    CPUArchState *env = thread_cpu->env_ptr;
-    TaskState *ts = (TaskState *)env->opaque;
+    TaskState *ts = (TaskState *)thread_cpu->opaque;
     int n = sizeof(abi_ulong);
     abi_ulong envp;
     abi_ulong argv;
@@ -114,7 +113,7 @@ abi_ulong loader_build_argptr(int envc, int argc, abi_ulong sp,
     /* FIXME - handle put_user() failures */
     put_user_ual(argc, sp);
 #ifdef CONFIG_QTRACE_TAINT
-    qtrace_taint_memory(env, sp, sizeof(target_ulong),
+    qtrace_taint_memory(thread_cpu->env_ptr, sp, sizeof(target_ulong),
                         QTRACE_TAINT_LABEL_ARG);
 #endif
     ts->info->arg_start = stringp;
@@ -122,7 +121,7 @@ abi_ulong loader_build_argptr(int envc, int argc, abi_ulong sp,
         /* FIXME - handle put_user() failures */
         put_user_ual(stringp, argv);
 #ifdef CONFIG_QTRACE_TAINT
-        qtrace_taint_memory(env, argv, target_strlen(stringp),
+        qtrace_taint_memory(thread_cpu->env_ptr, argv, target_strlen(stringp),
                             QTRACE_TAINT_LABEL_ARG);
 #endif
         argv += n;
@@ -135,7 +134,7 @@ abi_ulong loader_build_argptr(int envc, int argc, abi_ulong sp,
         /* FIXME - handle put_user() failures */
         put_user_ual(stringp, envp);
 #ifdef CONFIG_QTRACE_TAINT
-        qtrace_taint_memory(env, envp, target_strlen(stringp),
+        qtrace_taint_memory(thread_cpu->env_ptr, envp, target_strlen(stringp),
                             QTRACE_TAINT_LABEL_ENV);
 #endif
         envp += n;
@@ -147,7 +146,7 @@ abi_ulong loader_build_argptr(int envc, int argc, abi_ulong sp,
     return sp;
 }
 
-int loader_exec(const char * filename, char ** argv, char ** envp,
+int loader_exec(int fdexec, const char *filename, char **argv, char **envp,
              struct target_pt_regs * regs, struct image_info *infop,
              struct linux_binprm *bprm)
 {
@@ -156,11 +155,7 @@ int loader_exec(const char * filename, char ** argv, char ** envp,
 
     bprm->p = TARGET_PAGE_SIZE*MAX_ARG_PAGES-sizeof(unsigned int);
     memset(bprm->page, 0, sizeof(bprm->page));
-    retval = open(filename, O_RDONLY);
-    if (retval < 0) {
-        return -errno;
-    }
-    bprm->fd = retval;
+    bprm->fd = fdexec;
     bprm->filename = (char *)filename;
     bprm->argc = count(argv);
     bprm->argv = argv;
@@ -174,13 +169,13 @@ int loader_exec(const char * filename, char ** argv, char ** envp,
                 && bprm->buf[1] == 'E'
                 && bprm->buf[2] == 'L'
                 && bprm->buf[3] == 'F') {
-            retval = load_elf_binary(bprm, regs, infop);
+            retval = load_elf_binary(bprm, infop);
 #if defined(TARGET_HAS_BFLT)
         } else if (bprm->buf[0] == 'b'
                 && bprm->buf[1] == 'F'
                 && bprm->buf[2] == 'L'
                 && bprm->buf[3] == 'T') {
-            retval = load_flt_binary(bprm,regs,infop);
+            retval = load_flt_binary(bprm, infop);
 #endif
         } else {
             return -ENOEXEC;

@@ -27,8 +27,159 @@
 
 #include "hw/hw.h"
 #include "trace.h"
+#include "qemu/timer.h"
 #include "hw/ppc/spapr.h"
 #include "hw/ppc/xics.h"
+#include "qemu/error-report.h"
+#include "qapi/visitor.h"
+
+static int get_cpu_index_by_dt_id(int cpu_dt_id)
+{
+    PowerPCCPU *cpu = ppc_get_vcpu_by_dt_id(cpu_dt_id);
+
+    if (cpu) {
+        return cpu->parent_obj.cpu_index;
+    }
+
+    return -1;
+}
+
+void xics_cpu_setup(XICSState *icp, PowerPCCPU *cpu)
+{
+    CPUState *cs = CPU(cpu);
+    CPUPPCState *env = &cpu->env;
+    ICPState *ss = &icp->ss[cs->cpu_index];
+    XICSStateClass *info = XICS_COMMON_GET_CLASS(icp);
+
+    assert(cs->cpu_index < icp->nr_servers);
+
+    if (info->cpu_setup) {
+        info->cpu_setup(icp, cpu);
+    }
+
+    switch (PPC_INPUT(env)) {
+    case PPC_FLAGS_INPUT_POWER7:
+        ss->output = env->irq_inputs[POWER7_INPUT_INT];
+        break;
+
+    case PPC_FLAGS_INPUT_970:
+        ss->output = env->irq_inputs[PPC970_INPUT_INT];
+        break;
+
+    default:
+        error_report("XICS interrupt controller does not support this CPU "
+                     "bus model");
+        abort();
+    }
+}
+
+/*
+ * XICS Common class - parent for emulated XICS and KVM-XICS
+ */
+static void xics_common_reset(DeviceState *d)
+{
+    XICSState *icp = XICS_COMMON(d);
+    int i;
+
+    for (i = 0; i < icp->nr_servers; i++) {
+        device_reset(DEVICE(&icp->ss[i]));
+    }
+
+    device_reset(DEVICE(icp->ics));
+}
+
+static void xics_prop_get_nr_irqs(Object *obj, Visitor *v,
+                                  void *opaque, const char *name, Error **errp)
+{
+    XICSState *icp = XICS_COMMON(obj);
+    int64_t value = icp->nr_irqs;
+
+    visit_type_int(v, &value, name, errp);
+}
+
+static void xics_prop_set_nr_irqs(Object *obj, Visitor *v,
+                                  void *opaque, const char *name, Error **errp)
+{
+    XICSState *icp = XICS_COMMON(obj);
+    XICSStateClass *info = XICS_COMMON_GET_CLASS(icp);
+    Error *error = NULL;
+    int64_t value;
+
+    visit_type_int(v, &value, name, &error);
+    if (error) {
+        error_propagate(errp, error);
+        return;
+    }
+    if (icp->nr_irqs) {
+        error_setg(errp, "Number of interrupts is already set to %u",
+                   icp->nr_irqs);
+        return;
+    }
+
+    assert(info->set_nr_irqs);
+    assert(icp->ics);
+    info->set_nr_irqs(icp, value, errp);
+}
+
+static void xics_prop_get_nr_servers(Object *obj, Visitor *v,
+                                     void *opaque, const char *name,
+                                     Error **errp)
+{
+    XICSState *icp = XICS_COMMON(obj);
+    int64_t value = icp->nr_servers;
+
+    visit_type_int(v, &value, name, errp);
+}
+
+static void xics_prop_set_nr_servers(Object *obj, Visitor *v,
+                                     void *opaque, const char *name,
+                                     Error **errp)
+{
+    XICSState *icp = XICS_COMMON(obj);
+    XICSStateClass *info = XICS_COMMON_GET_CLASS(icp);
+    Error *error = NULL;
+    int64_t value;
+
+    visit_type_int(v, &value, name, &error);
+    if (error) {
+        error_propagate(errp, error);
+        return;
+    }
+    if (icp->nr_servers) {
+        error_setg(errp, "Number of servers is already set to %u",
+                   icp->nr_servers);
+        return;
+    }
+
+    assert(info->set_nr_servers);
+    info->set_nr_servers(icp, value, errp);
+}
+
+static void xics_common_initfn(Object *obj)
+{
+    object_property_add(obj, "nr_irqs", "int",
+                        xics_prop_get_nr_irqs, xics_prop_set_nr_irqs,
+                        NULL, NULL, NULL);
+    object_property_add(obj, "nr_servers", "int",
+                        xics_prop_get_nr_servers, xics_prop_set_nr_servers,
+                        NULL, NULL, NULL);
+}
+
+static void xics_common_class_init(ObjectClass *oc, void *data)
+{
+    DeviceClass *dc = DEVICE_CLASS(oc);
+
+    dc->reset = xics_common_reset;
+}
+
+static const TypeInfo xics_common_info = {
+    .name          = TYPE_XICS_COMMON,
+    .parent        = TYPE_SYS_BUS_DEVICE,
+    .instance_size = sizeof(XICSState),
+    .class_size    = sizeof(XICSStateClass),
+    .instance_init = xics_common_initfn,
+    .class_init    = xics_common_class_init,
+};
 
 /*
  * ICP: Presentation layer
@@ -153,12 +304,35 @@ static void icp_irq(XICSState *icp, int server, int nr, uint8_t priority)
     }
 }
 
+static void icp_dispatch_pre_save(void *opaque)
+{
+    ICPState *ss = opaque;
+    ICPStateClass *info = ICP_GET_CLASS(ss);
+
+    if (info->pre_save) {
+        info->pre_save(ss);
+    }
+}
+
+static int icp_dispatch_post_load(void *opaque, int version_id)
+{
+    ICPState *ss = opaque;
+    ICPStateClass *info = ICP_GET_CLASS(ss);
+
+    if (info->post_load) {
+        return info->post_load(ss, version_id);
+    }
+
+    return 0;
+}
+
 static const VMStateDescription vmstate_icp_server = {
     .name = "icp/server",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
+    .pre_save = icp_dispatch_pre_save,
+    .post_load = icp_dispatch_post_load,
+    .fields = (VMStateField[]) {
         /* Sanity check */
         VMSTATE_UINT32(xirr, ICPState),
         VMSTATE_UINT8(pending_priority, ICPState),
@@ -187,11 +361,12 @@ static void icp_class_init(ObjectClass *klass, void *data)
     dc->vmsd = &vmstate_icp_server;
 }
 
-static TypeInfo icp_info = {
+static const TypeInfo icp_info = {
     .name = TYPE_ICP,
     .parent = TYPE_DEVICE,
     .instance_size = sizeof(ICPState),
     .class_init = icp_class_init,
+    .class_size = sizeof(ICPStateClass),
 };
 
 /*
@@ -262,7 +437,7 @@ static void ics_set_irq(void *opaque, int srcno, int val)
 {
     ICSState *ics = (ICSState *)opaque;
 
-    if (ics->islsi[srcno]) {
+    if (ics->irqs[srcno].flags & XICS_FLAGS_IRQ_LSI) {
         set_irq_lsi(ics, srcno, val);
     } else {
         set_irq_msi(ics, srcno, val);
@@ -299,7 +474,7 @@ static void ics_write_xive(ICSState *ics, int nr, int server,
 
     trace_xics_ics_write_xive(nr, srcno, server, priority);
 
-    if (ics->islsi[srcno]) {
+    if (ics->irqs[srcno].flags & XICS_FLAGS_IRQ_LSI) {
         write_xive_lsi(ics, srcno);
     } else {
         write_xive_msi(ics, srcno);
@@ -321,7 +496,7 @@ static void ics_resend(ICSState *ics)
 
     for (i = 0; i < ics->nr_irqs; i++) {
         /* FIXME: filter by server#? */
-        if (ics->islsi[i]) {
+        if (ics->irqs[i].flags & XICS_FLAGS_IRQ_LSI) {
             resend_lsi(ics, i);
         } else {
             resend_msi(ics, i);
@@ -336,7 +511,7 @@ static void ics_eoi(ICSState *ics, int nr)
 
     trace_xics_ics_eoi(nr);
 
-    if (ics->islsi[srcno]) {
+    if (ics->irqs[srcno].flags & XICS_FLAGS_IRQ_LSI) {
         irq->status &= ~XICS_STATUS_SENT;
     }
 }
@@ -345,18 +520,24 @@ static void ics_reset(DeviceState *dev)
 {
     ICSState *ics = ICS(dev);
     int i;
+    uint8_t flags[ics->nr_irqs];
+
+    for (i = 0; i < ics->nr_irqs; i++) {
+        flags[i] = ics->irqs[i].flags;
+    }
 
     memset(ics->irqs, 0, sizeof(ICSIRQState) * ics->nr_irqs);
+
     for (i = 0; i < ics->nr_irqs; i++) {
         ics->irqs[i].priority = 0xff;
         ics->irqs[i].saved_priority = 0xff;
+        ics->irqs[i].flags = flags[i];
     }
 }
 
-static int ics_post_load(void *opaque, int version_id)
+static int ics_post_load(ICSState *ics, int version_id)
 {
     int i;
-    ICSState *ics = opaque;
 
     for (i = 0; i < ics->icp->nr_servers; i++) {
         icp_resend(ics->icp, i);
@@ -365,16 +546,38 @@ static int ics_post_load(void *opaque, int version_id)
     return 0;
 }
 
+static void ics_dispatch_pre_save(void *opaque)
+{
+    ICSState *ics = opaque;
+    ICSStateClass *info = ICS_GET_CLASS(ics);
+
+    if (info->pre_save) {
+        info->pre_save(ics);
+    }
+}
+
+static int ics_dispatch_post_load(void *opaque, int version_id)
+{
+    ICSState *ics = opaque;
+    ICSStateClass *info = ICS_GET_CLASS(ics);
+
+    if (info->post_load) {
+        return info->post_load(ics, version_id);
+    }
+
+    return 0;
+}
+
 static const VMStateDescription vmstate_ics_irq = {
     .name = "ics/irq",
-    .version_id = 1,
+    .version_id = 2,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32(server, ICSIRQState),
         VMSTATE_UINT8(priority, ICSIRQState),
         VMSTATE_UINT8(saved_priority, ICSIRQState),
         VMSTATE_UINT8(status, ICSIRQState),
+        VMSTATE_UINT8(flags, ICSIRQState),
         VMSTATE_END_OF_LIST()
     },
 };
@@ -383,9 +586,9 @@ static const VMStateDescription vmstate_ics = {
     .name = "ics",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .post_load = ics_post_load,
-    .fields      = (VMStateField []) {
+    .pre_save = ics_dispatch_pre_save,
+    .post_load = ics_dispatch_post_load,
+    .fields = (VMStateField[]) {
         /* Sanity check */
         VMSTATE_UINT32_EQUAL(nr_irqs, ICSState),
 
@@ -395,51 +598,208 @@ static const VMStateDescription vmstate_ics = {
     },
 };
 
-static int ics_realize(DeviceState *dev)
+static void ics_initfn(Object *obj)
+{
+    ICSState *ics = ICS(obj);
+
+    ics->offset = XICS_IRQ_BASE;
+}
+
+static void ics_realize(DeviceState *dev, Error **errp)
 {
     ICSState *ics = ICS(dev);
 
+    if (!ics->nr_irqs) {
+        error_setg(errp, "Number of interrupts needs to be greater 0");
+        return;
+    }
     ics->irqs = g_malloc0(ics->nr_irqs * sizeof(ICSIRQState));
-    ics->islsi = g_malloc0(ics->nr_irqs * sizeof(bool));
     ics->qirqs = qemu_allocate_irqs(ics_set_irq, ics, ics->nr_irqs);
-
-    return 0;
 }
 
 static void ics_class_init(ObjectClass *klass, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(klass);
+    ICSStateClass *isc = ICS_CLASS(klass);
 
-    dc->init = ics_realize;
+    dc->realize = ics_realize;
     dc->vmsd = &vmstate_ics;
     dc->reset = ics_reset;
+    isc->post_load = ics_post_load;
 }
 
-static TypeInfo ics_info = {
+static const TypeInfo ics_info = {
     .name = TYPE_ICS,
     .parent = TYPE_DEVICE,
     .instance_size = sizeof(ICSState),
     .class_init = ics_class_init,
+    .class_size = sizeof(ICSStateClass),
+    .instance_init = ics_initfn,
 };
 
 /*
  * Exported functions
  */
+static int xics_find_source(XICSState *icp, int irq)
+{
+    int sources = 1;
+    int src;
+
+    /* FIXME: implement multiple sources */
+    for (src = 0; src < sources; ++src) {
+        ICSState *ics = &icp->ics[src];
+        if (ics_valid_irq(ics, irq)) {
+            return src;
+        }
+    }
+
+    return -1;
+}
 
 qemu_irq xics_get_qirq(XICSState *icp, int irq)
 {
-    if (!ics_valid_irq(icp->ics, irq)) {
-        return NULL;
+    int src = xics_find_source(icp, irq);
+
+    if (src >= 0) {
+        ICSState *ics = &icp->ics[src];
+        return ics->qirqs[irq - ics->offset];
     }
 
-    return icp->ics->qirqs[irq - icp->ics->offset];
+    return NULL;
+}
+
+static void ics_set_irq_type(ICSState *ics, int srcno, bool lsi)
+{
+    assert(!(ics->irqs[srcno].flags & XICS_FLAGS_IRQ_MASK));
+
+    ics->irqs[srcno].flags |=
+        lsi ? XICS_FLAGS_IRQ_LSI : XICS_FLAGS_IRQ_MSI;
 }
 
 void xics_set_irq_type(XICSState *icp, int irq, bool lsi)
 {
-    assert(ics_valid_irq(icp->ics, irq));
+    int src = xics_find_source(icp, irq);
+    ICSState *ics;
 
-    icp->ics->islsi[irq - icp->ics->offset] = lsi;
+    assert(src >= 0);
+
+    ics = &icp->ics[src];
+    ics_set_irq_type(ics, irq - ics->offset, lsi);
+}
+
+#define ICS_IRQ_FREE(ics, srcno)   \
+    (!((ics)->irqs[(srcno)].flags & (XICS_FLAGS_IRQ_MASK)))
+
+static int ics_find_free_block(ICSState *ics, int num, int alignnum)
+{
+    int first, i;
+
+    for (first = 0; first < ics->nr_irqs; first += alignnum) {
+        if (num > (ics->nr_irqs - first)) {
+            return -1;
+        }
+        for (i = first; i < first + num; ++i) {
+            if (!ICS_IRQ_FREE(ics, i)) {
+                break;
+            }
+        }
+        if (i == (first + num)) {
+            return first;
+        }
+    }
+
+    return -1;
+}
+
+int xics_alloc(XICSState *icp, int src, int irq_hint, bool lsi)
+{
+    ICSState *ics = &icp->ics[src];
+    int irq;
+
+    if (irq_hint) {
+        assert(src == xics_find_source(icp, irq_hint));
+        if (!ICS_IRQ_FREE(ics, irq_hint - ics->offset)) {
+            trace_xics_alloc_failed_hint(src, irq_hint);
+            return -1;
+        }
+        irq = irq_hint;
+    } else {
+        irq = ics_find_free_block(ics, 1, 1);
+        if (irq < 0) {
+            trace_xics_alloc_failed_no_left(src);
+            return -1;
+        }
+        irq += ics->offset;
+    }
+
+    ics_set_irq_type(ics, irq - ics->offset, lsi);
+    trace_xics_alloc(src, irq);
+
+    return irq;
+}
+
+/*
+ * Allocate block of consequtive IRQs, returns a number of the first.
+ * If align==true, aligns the first IRQ number to num.
+ */
+int xics_alloc_block(XICSState *icp, int src, int num, bool lsi, bool align)
+{
+    int i, first = -1;
+    ICSState *ics = &icp->ics[src];
+
+    assert(src == 0);
+    /*
+     * MSIMesage::data is used for storing VIRQ so
+     * it has to be aligned to num to support multiple
+     * MSI vectors. MSI-X is not affected by this.
+     * The hint is used for the first IRQ, the rest should
+     * be allocated continuously.
+     */
+    if (align) {
+        assert((num == 1) || (num == 2) || (num == 4) ||
+               (num == 8) || (num == 16) || (num == 32));
+        first = ics_find_free_block(ics, num, num);
+    } else {
+        first = ics_find_free_block(ics, num, 1);
+    }
+
+    if (first >= 0) {
+        for (i = first; i < first + num; ++i) {
+            ics_set_irq_type(ics, i, lsi);
+        }
+    }
+    first += ics->offset;
+
+    trace_xics_alloc_block(src, first, num, lsi, align);
+
+    return first;
+}
+
+static void ics_free(ICSState *ics, int srcno, int num)
+{
+    int i;
+
+    for (i = srcno; i < srcno + num; ++i) {
+        if (ICS_IRQ_FREE(ics, i)) {
+            trace_xics_ics_free_warn(ics - ics->icp->ics, i + ics->offset);
+        }
+        memset(&ics->irqs[i], 0, sizeof(ICSIRQState));
+    }
+}
+
+void xics_free(XICSState *icp, int irq, int num)
+{
+    int src = xics_find_source(icp, irq);
+
+    if (src >= 0) {
+        ICSState *ics = &icp->ics[src];
+
+        /* FIXME: implement multiple sources */
+        assert(src == 0);
+
+        trace_xics_ics_free(ics - icp->ics, irq, num);
+        ics_free(ics, irq - ics->offset, num);
+    }
 }
 
 /*
@@ -459,7 +819,7 @@ static target_ulong h_cppr(PowerPCCPU *cpu, sPAPREnvironment *spapr,
 static target_ulong h_ipi(PowerPCCPU *cpu, sPAPREnvironment *spapr,
                           target_ulong opcode, target_ulong *args)
 {
-    target_ulong server = args[0];
+    target_ulong server = get_cpu_index_by_dt_id(args[0]);
     target_ulong mfrr = args[1];
 
     if (server >= spapr->icp->nr_servers) {
@@ -480,6 +840,18 @@ static target_ulong h_xirr(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     return H_SUCCESS;
 }
 
+static target_ulong h_xirr_x(PowerPCCPU *cpu, sPAPREnvironment *spapr,
+                             target_ulong opcode, target_ulong *args)
+{
+    CPUState *cs = CPU(cpu);
+    ICPState *ss = &spapr->icp->ss[cs->cpu_index];
+    uint32_t xirr = icp_accept(ss);
+
+    args[0] = xirr;
+    args[1] = cpu_get_real_ticks();
+    return H_SUCCESS;
+}
+
 static target_ulong h_eoi(PowerPCCPU *cpu, sPAPREnvironment *spapr,
                           target_ulong opcode, target_ulong *args)
 {
@@ -487,6 +859,18 @@ static target_ulong h_eoi(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     target_ulong xirr = args[0];
 
     icp_eoi(spapr->icp, cs->cpu_index, xirr);
+    return H_SUCCESS;
+}
+
+static target_ulong h_ipoll(PowerPCCPU *cpu, sPAPREnvironment *spapr,
+                            target_ulong opcode, target_ulong *args)
+{
+    CPUState *cs = CPU(cpu);
+    ICPState *ss = &spapr->icp->ss[cs->cpu_index];
+
+    args[0] = ss->xirr;
+    args[1] = ss->mfrr;
+
     return H_SUCCESS;
 }
 
@@ -499,23 +883,23 @@ static void rtas_set_xive(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     uint32_t nr, server, priority;
 
     if ((nargs != 3) || (nret != 1)) {
-        rtas_st(rets, 0, -3);
+        rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
         return;
     }
 
     nr = rtas_ld(args, 0);
-    server = rtas_ld(args, 1);
+    server = get_cpu_index_by_dt_id(rtas_ld(args, 1));
     priority = rtas_ld(args, 2);
 
     if (!ics_valid_irq(ics, nr) || (server >= ics->icp->nr_servers)
         || (priority > 0xff)) {
-        rtas_st(rets, 0, -3);
+        rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
         return;
     }
 
     ics_write_xive(ics, nr, server, priority, priority);
 
-    rtas_st(rets, 0, 0); /* Success */
+    rtas_st(rets, 0, RTAS_OUT_SUCCESS);
 }
 
 static void rtas_get_xive(PowerPCCPU *cpu, sPAPREnvironment *spapr,
@@ -527,18 +911,18 @@ static void rtas_get_xive(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     uint32_t nr;
 
     if ((nargs != 1) || (nret != 3)) {
-        rtas_st(rets, 0, -3);
+        rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
         return;
     }
 
     nr = rtas_ld(args, 0);
 
     if (!ics_valid_irq(ics, nr)) {
-        rtas_st(rets, 0, -3);
+        rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
         return;
     }
 
-    rtas_st(rets, 0, 0); /* Success */
+    rtas_st(rets, 0, RTAS_OUT_SUCCESS);
     rtas_st(rets, 1, ics->irqs[nr - ics->offset].server);
     rtas_st(rets, 2, ics->irqs[nr - ics->offset].priority);
 }
@@ -552,21 +936,21 @@ static void rtas_int_off(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     uint32_t nr;
 
     if ((nargs != 1) || (nret != 1)) {
-        rtas_st(rets, 0, -3);
+        rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
         return;
     }
 
     nr = rtas_ld(args, 0);
 
     if (!ics_valid_irq(ics, nr)) {
-        rtas_st(rets, 0, -3);
+        rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
         return;
     }
 
     ics_write_xive(ics, nr, ics->irqs[nr - ics->offset].server, 0xff,
                    ics->irqs[nr - ics->offset].priority);
 
-    rtas_st(rets, 0, 0); /* Success */
+    rtas_st(rets, 0, RTAS_OUT_SUCCESS);
 }
 
 static void rtas_int_on(PowerPCCPU *cpu, sPAPREnvironment *spapr,
@@ -578,14 +962,14 @@ static void rtas_int_on(PowerPCCPU *cpu, sPAPREnvironment *spapr,
     uint32_t nr;
 
     if ((nargs != 1) || (nret != 1)) {
-        rtas_st(rets, 0, -3);
+        rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
         return;
     }
 
     nr = rtas_ld(args, 0);
 
     if (!ics_valid_irq(ics, nr)) {
-        rtas_st(rets, 0, -3);
+        rtas_st(rets, 0, RTAS_OUT_PARAM_ERROR);
         return;
     }
 
@@ -593,67 +977,71 @@ static void rtas_int_on(PowerPCCPU *cpu, sPAPREnvironment *spapr,
                    ics->irqs[nr - ics->offset].saved_priority,
                    ics->irqs[nr - ics->offset].saved_priority);
 
-    rtas_st(rets, 0, 0); /* Success */
+    rtas_st(rets, 0, RTAS_OUT_SUCCESS);
 }
 
 /*
  * XICS
  */
 
-static void xics_reset(DeviceState *d)
+static void xics_set_nr_irqs(XICSState *icp, uint32_t nr_irqs, Error **errp)
 {
-    XICSState *icp = XICS(d);
-    int i;
-
-    for (i = 0; i < icp->nr_servers; i++) {
-        device_reset(DEVICE(&icp->ss[i]));
-    }
-
-    device_reset(DEVICE(icp->ics));
+    icp->nr_irqs = icp->ics->nr_irqs = nr_irqs;
 }
 
-void xics_cpu_setup(XICSState *icp, PowerPCCPU *cpu)
+static void xics_set_nr_servers(XICSState *icp, uint32_t nr_servers,
+                                Error **errp)
 {
-    CPUState *cs = CPU(cpu);
-    CPUPPCState *env = &cpu->env;
-    ICPState *ss = &icp->ss[cs->cpu_index];
+    int i;
 
-    assert(cs->cpu_index < icp->nr_servers);
+    icp->nr_servers = nr_servers;
 
-    switch (PPC_INPUT(env)) {
-    case PPC_FLAGS_INPUT_POWER7:
-        ss->output = env->irq_inputs[POWER7_INPUT_INT];
-        break;
-
-    case PPC_FLAGS_INPUT_970:
-        ss->output = env->irq_inputs[PPC970_INPUT_INT];
-        break;
-
-    default:
-        fprintf(stderr, "XICS interrupt controller does not support this CPU "
-                "bus model\n");
-        abort();
+    icp->ss = g_malloc0(icp->nr_servers*sizeof(ICPState));
+    for (i = 0; i < icp->nr_servers; i++) {
+        char buffer[32];
+        object_initialize(&icp->ss[i], sizeof(icp->ss[i]), TYPE_ICP);
+        snprintf(buffer, sizeof(buffer), "icp[%d]", i);
+        object_property_add_child(OBJECT(icp), buffer, OBJECT(&icp->ss[i]),
+                                  errp);
     }
 }
 
 static void xics_realize(DeviceState *dev, Error **errp)
 {
     XICSState *icp = XICS(dev);
-    ICSState *ics = icp->ics;
+    Error *error = NULL;
     int i;
 
-    ics->nr_irqs = icp->nr_irqs;
-    ics->offset = XICS_IRQ_BASE;
-    ics->icp = icp;
-    qdev_init_nofail(DEVICE(ics));
+    if (!icp->nr_servers) {
+        error_setg(errp, "Number of servers needs to be greater 0");
+        return;
+    }
 
-    icp->ss = g_malloc0(icp->nr_servers*sizeof(ICPState));
+    /* Registration of global state belongs into realize */
+    spapr_rtas_register(RTAS_IBM_SET_XIVE, "ibm,set-xive", rtas_set_xive);
+    spapr_rtas_register(RTAS_IBM_GET_XIVE, "ibm,get-xive", rtas_get_xive);
+    spapr_rtas_register(RTAS_IBM_INT_OFF, "ibm,int-off", rtas_int_off);
+    spapr_rtas_register(RTAS_IBM_INT_ON, "ibm,int-on", rtas_int_on);
+
+    spapr_register_hypercall(H_CPPR, h_cppr);
+    spapr_register_hypercall(H_IPI, h_ipi);
+    spapr_register_hypercall(H_XIRR, h_xirr);
+    spapr_register_hypercall(H_XIRR_X, h_xirr_x);
+    spapr_register_hypercall(H_EOI, h_eoi);
+    spapr_register_hypercall(H_IPOLL, h_ipoll);
+
+    object_property_set_bool(OBJECT(icp->ics), true, "realized", &error);
+    if (error) {
+        error_propagate(errp, error);
+        return;
+    }
+
     for (i = 0; i < icp->nr_servers; i++) {
-        char buffer[32];
-        object_initialize(&icp->ss[i], TYPE_ICP);
-        snprintf(buffer, sizeof(buffer), "icp[%d]", i);
-        object_property_add_child(OBJECT(icp), buffer, OBJECT(&icp->ss[i]), NULL);
-        qdev_init_nofail(DEVICE(&icp->ss[i]));
+        object_property_set_bool(OBJECT(&icp->ss[i]), true, "realized", &error);
+        if (error) {
+            error_propagate(errp, error);
+            return;
+        }
     }
 }
 
@@ -663,43 +1051,31 @@ static void xics_initfn(Object *obj)
 
     xics->ics = ICS(object_new(TYPE_ICS));
     object_property_add_child(obj, "ics", OBJECT(xics->ics), NULL);
+    xics->ics->icp = xics;
 }
-
-static Property xics_properties[] = {
-    DEFINE_PROP_UINT32("nr_servers", XICSState, nr_servers, -1),
-    DEFINE_PROP_UINT32("nr_irqs", XICSState, nr_irqs, -1),
-    DEFINE_PROP_END_OF_LIST(),
-};
 
 static void xics_class_init(ObjectClass *oc, void *data)
 {
     DeviceClass *dc = DEVICE_CLASS(oc);
+    XICSStateClass *xsc = XICS_CLASS(oc);
 
     dc->realize = xics_realize;
-    dc->props = xics_properties;
-    dc->reset = xics_reset;
-
-    spapr_rtas_register("ibm,set-xive", rtas_set_xive);
-    spapr_rtas_register("ibm,get-xive", rtas_get_xive);
-    spapr_rtas_register("ibm,int-off", rtas_int_off);
-    spapr_rtas_register("ibm,int-on", rtas_int_on);
-
-    spapr_register_hypercall(H_CPPR, h_cppr);
-    spapr_register_hypercall(H_IPI, h_ipi);
-    spapr_register_hypercall(H_XIRR, h_xirr);
-    spapr_register_hypercall(H_EOI, h_eoi);
+    xsc->set_nr_irqs = xics_set_nr_irqs;
+    xsc->set_nr_servers = xics_set_nr_servers;
 }
 
 static const TypeInfo xics_info = {
     .name          = TYPE_XICS,
-    .parent        = TYPE_SYS_BUS_DEVICE,
+    .parent        = TYPE_XICS_COMMON,
     .instance_size = sizeof(XICSState),
+    .class_size = sizeof(XICSStateClass),
     .class_init    = xics_class_init,
     .instance_init = xics_initfn,
 };
 
 static void xics_register_types(void)
 {
+    type_register_static(&xics_common_info);
     type_register_static(&xics_info);
     type_register_static(&ics_info);
     type_register_static(&icp_info);

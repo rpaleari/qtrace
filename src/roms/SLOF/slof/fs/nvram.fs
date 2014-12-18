@@ -1,5 +1,5 @@
 \ *****************************************************************************
-\ * Copyright (c) 2004, 2008 IBM Corporation
+\ * Copyright (c) 2004, 2014 IBM Corporation
 \ * All rights reserved.
 \ * This program and the accompanying materials
 \ * are made available under the terms of the BSD License
@@ -161,29 +161,22 @@ create tmpStr 500 allot
 
 : dmesg-part ( from-str cnt-str -- left-from-str left-cnt-str )
    2dup
-   s" ibm,BE0log" get-named-nvram-partition IF
-      s" ibm,CPU0log" get-named-nvram-partition IF
-         2drop EXIT
-      THEN
+   s" ibm,CPU0log" get-named-nvram-partition IF
+      2drop EXIT
    THEN
    drop .dmesg-part nip nip
 ;
 
 : dmesg2 ( -- )
-   s" ibm,BE1log" get-named-nvram-partition IF
-      s" ibm,CPU1log" get-named-nvram-partition IF
-         ." No log partition." cr EXIT
-      THEN
+   s" ibm,CPU1log" get-named-nvram-partition IF
+      ." No log partition." cr EXIT
    THEN
    drop .dmesg
 ;
 
 : dmesg ( -- )
-   s" ibm,BE0log" get-named-nvram-partition IF
-      s" ibm,CPU0log" get-named-nvram-partition IF
-         ." No log partition." cr EXIT
-      THEN
+   s" ibm,CPU0log" get-named-nvram-partition IF
+      ." No log partition." cr EXIT
    THEN
    drop .dmesg
 ;
-

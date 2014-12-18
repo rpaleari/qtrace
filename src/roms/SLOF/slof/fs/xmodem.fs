@@ -116,5 +116,5 @@
 \ *
 : xmodem-load  ( -- bytes )
    cr ." Waiting for start of XMODEM upload..." cr
-   load-base (xmodem-load)
+   get-load-base (xmodem-load)
 ;

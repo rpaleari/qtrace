@@ -85,7 +85,9 @@ virtiodev virtio-setup-vd
 : (set-alias)
     " virtfs" find-alias 0= IF
         " virtfs" get-node node>path set-alias
-    ELSE THEN 
+    ELSE
+        drop
+    THEN
 ;
 
 \

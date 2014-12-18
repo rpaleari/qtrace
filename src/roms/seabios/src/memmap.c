@@ -4,14 +4,19 @@
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
+#include "config.h" // BUILD_MAX_E820
 #include "memmap.h" // struct e820entry
-#include "config.h" // CONFIG_*
-#include "util.h" // dprintf.h
+#include "output.h" // dprintf
+#include "string.h" // memmove
 
 
 /****************************************************************
  * e820 memory map
  ****************************************************************/
+
+// Info on e820 map location and size.
+struct e820entry e820_list[BUILD_MAX_E820] VARFSEG;
+int e820_count VARFSEG;
 
 // Remove an entry from the e820_list.
 static void
@@ -26,7 +31,7 @@ remove_e820(int i)
 static void
 insert_e820(int i, u64 start, u64 size, u32 type)
 {
-    if (e820_count >= CONFIG_MAX_E820) {
+    if (e820_count >= BUILD_MAX_E820) {
         warn_noalloc();
         return;
     }
@@ -133,7 +138,7 @@ add_e820(u64 start, u64 size, u32 type)
 
 // Report on final memory locations.
 void
-memmap_finalize(void)
+memmap_prepboot(void)
 {
     dump_map();
 }

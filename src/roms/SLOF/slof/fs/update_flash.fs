@@ -23,7 +23,7 @@ false value flash-new
 ;
 
 : flash-read-temp ( -- success? )
-   get-flashside 1 = IF flash-addr load-base over flash-image-size rmove true
+   get-flashside 1 = IF flash-addr get-load-base over flash-image-size rmove true
    ELSE
       false
    THEN
@@ -31,7 +31,7 @@ false value flash-new
 
 : flash-read-perm ( -- success? )
    get-flashside 0= IF
-      flash-addr load-base over flash-image-size rmove true
+      flash-addr get-load-base over flash-image-size rmove true
    ELSE
       false
    THEN
@@ -77,7 +77,7 @@ false value flash-new
          flash-ensure-temp
       ENDOF
       [char] d OF
-         flash-load-base load-base 200000 move
+         flash-load-base get-load-base 200000 move
          flash-ensure-temp
       ENDOF
       [char] c OF
@@ -105,6 +105,6 @@ false value flash-new
       update-flash-help r> drop EXIT
    THEN
 
-   load-base flash-write 0= IF ." Flash write failed !! " cr THEN
+   get-load-base flash-write 0= IF ." Flash write failed !! " cr THEN
    r> set-flashside drop                           \ Restore old flashside
 ;

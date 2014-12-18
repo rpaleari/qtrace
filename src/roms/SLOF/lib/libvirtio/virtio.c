@@ -128,6 +128,21 @@ void virtio_queue_notify(struct virtio_device *dev, int queue)
 	}
 }
 
+/**
+ * Set queue address
+ */
+void virtio_set_qaddr(struct virtio_device *dev, int queue, unsigned int qaddr)
+{
+        if (dev->type == VIRTIO_TYPE_PCI) {
+                uint32_t val = qaddr;
+                val = val >> 12;
+                ci_write_16(dev->base+VIRTIOHDR_QUEUE_SELECT,
+                            cpu_to_le16(queue));
+                eieio();
+                ci_write_32(dev->base+VIRTIOHDR_QUEUE_ADDRESS,
+                            cpu_to_le32(val));
+        }
+}
 
 /**
  * Set device status bits
@@ -147,7 +162,18 @@ void virtio_set_guest_features(struct virtio_device *dev, int features)
 
 {
 	if (dev->type == VIRTIO_TYPE_PCI) {
-		ci_write_32(dev->base+VIRTIOHDR_GUEST_FEATURES, features);
+		ci_write_32(dev->base+VIRTIOHDR_GUEST_FEATURES, bswap_32(features));
+	}
+}
+
+/**
+ * Get host feature bits
+ */
+void virtio_get_host_features(struct virtio_device *dev, int *features)
+
+{
+	if (dev->type == VIRTIO_TYPE_PCI && features) {
+		*features = bswap_32(ci_read_32(dev->base+VIRTIOHDR_DEVICE_FEATURES));
 	}
 }
 

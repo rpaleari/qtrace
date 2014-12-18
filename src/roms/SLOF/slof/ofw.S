@@ -45,5 +45,15 @@
 	ld	r3, 0(r3)
 	std	r3, XVECT_M_HANDLER(0)
 
+#ifdef BROKEN_SC1
+	/* Patch potentially broken sc 1 instructions */
+	lis	r3, _slof_text@h
+	ori	r3, r3, _slof_text@l
+	lis	r4, _slof_text_end@h
+	ori	r4, r4, _slof_text_end@l
+	li	r5, 0
+	bl	.patch_broken_sc1
+#endif
+
 	/* GO! */
 	ba	0x100

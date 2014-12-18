@@ -240,9 +240,8 @@ static const VMStateDescription vmstate_vmmouse = {
     .name = "vmmouse",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .post_load = vmmouse_post_load,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_INT32_EQUAL(queue_size, VMMouseState),
         VMSTATE_UINT32_ARRAY(queue, VMMouseState, VMMOUSE_QUEUE_SIZE),
         VMSTATE_UINT16(nb_queue, VMMouseState),
@@ -282,10 +281,11 @@ static void vmmouse_class_initfn(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->realize = vmmouse_realizefn;
-    dc->no_user = 1;
     dc->reset = vmmouse_reset;
     dc->vmsd = &vmstate_vmmouse;
     dc->props = vmmouse_properties;
+    /* Reason: pointer property "ps2_mouse" */
+    dc->cannot_instantiate_with_device_add_yet = true;
 }
 
 static const TypeInfo vmmouse_info = {

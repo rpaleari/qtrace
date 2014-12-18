@@ -17,10 +17,10 @@
 #include <stdint.h>
 
 /* Initialize the environment for DNS client. */
-extern int8_t dns_init(uint32_t dns_server_ip);
+extern int8_t dns_init(uint32_t _dns_server_ip, uint8_t _dns_server_ipv6[16], uint8_t ip_version);
 
 /* For given URL retrieves IPv4 from DNS-server. */
-extern int8_t dns_get_ip(int8_t * domain_name, uint32_t * domain_ip);
+extern int8_t dns_get_ip(int8_t * url, uint8_t * domain_ip, uint8_t ip_version);
 
 /* Handles DNS-packets, which are detected by receive_ether. */
 extern int32_t handle_dns(uint8_t * packet, int32_t packetsize);

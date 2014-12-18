@@ -15,7 +15,7 @@
 #include <udp.h>
 #include <sys/socket.h>
 #include <dhcp.h>
-//#include <dhcpv6.h>
+#include <dhcpv6.h>
 #include <dns.h>
 #ifdef USE_MTFTP
 #include <mtftp.h>
@@ -76,11 +76,9 @@ handle_udp(uint8_t * udp_packet, int32_t packetsize) {
 			                  packetsize - sizeof(struct udphdr));
 		else
 			return -1;
-/*
         case UDPPORT_DHCPV6C:
                 return handle_dhcpv6(udp_packet+sizeof(struct udphdr),
                                      packetsize - sizeof(struct udphdr));
-*/
 	case UDPPORT_TFTPC:
 #ifdef USE_MTFTP
 	return handle_tftp(udp_packet + sizeof(struct udphdr),

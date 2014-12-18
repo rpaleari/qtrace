@@ -171,6 +171,10 @@ static void vga_update_memory_access(VGACommonState *s)
     MemoryRegion *region, *old_region = s->chain4_alias;
     hwaddr base, offset, size;
 
+    if (s->legacy_address_space == NULL) {
+        return;
+    }
+
     s->chain4_alias = NULL;
 
     if ((s->sr[VGA_SEQ_PLANE_WRITE] & VGA_SR02_ALL_PLANES) ==
@@ -318,7 +322,7 @@ static uint8_t vga_precise_retrace(VGACommonState *s)
         int cur_line, cur_line_char, cur_char;
         int64_t cur_tick;
 
-        cur_tick = qemu_get_clock_ns(vm_clock);
+        cur_tick = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
 
         cur_char = (cur_tick / r->ticks_per_char) % r->total_chars;
         cur_line = cur_char / r->htotal;
@@ -358,8 +362,6 @@ uint32_t vga_ioport_read(void *opaque, uint32_t addr)
 {
     VGACommonState *s = opaque;
     int val, index;
-
-    qemu_flush_coalesced_mmio_buffer();
 
     if (vga_ioport_invalid(s, addr)) {
         val = 0xff;
@@ -452,8 +454,6 @@ void vga_ioport_write(void *opaque, uint32_t addr, uint32_t val)
 {
     VGACommonState *s = opaque;
     int index;
-
-    qemu_flush_coalesced_mmio_buffer();
 
     /* check port range access depending on color/monochrome mode */
     if (vga_ioport_invalid(s, addr)) {
@@ -1304,7 +1304,7 @@ static void vga_draw_text(VGACommonState *s, int full_update)
     uint32_t *ch_attr_ptr;
     vga_draw_glyph8_func *vga_draw_glyph8;
     vga_draw_glyph9_func *vga_draw_glyph9;
-    int64_t now = qemu_get_clock_ms(vm_clock);
+    int64_t now = qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL);
 
     /* compute font data address (in plane 2) */
     v = s->sr[VGA_SEQ_CHARACTER_MAP];
@@ -1711,7 +1711,6 @@ static void vga_draw_graphic(VGACommonState *s, int full_update)
     } else if (is_buffer_shared(surface) &&
                (full_update || surface_data(surface) != s->vram_ptr
                 + (s->start_addr * 4))) {
-        DisplaySurface *surface;
         surface = qemu_create_displaysurface_from(disp_width,
                 height, depth, s->line_offset,
                 s->vram_ptr + (s->start_addr * 4), byteswap);
@@ -1907,7 +1906,7 @@ static void vga_update_display(void *opaque)
         }
         if (graphic_mode != s->graphic_mode) {
             s->graphic_mode = graphic_mode;
-            s->cursor_blink_time = qemu_get_clock_ms(vm_clock);
+            s->cursor_blink_time = qemu_clock_get_ms(QEMU_CLOCK_VIRTUAL);
             full_update = 1;
         }
         switch(graphic_mode) {
@@ -2215,9 +2214,8 @@ const VMStateDescription vmstate_vga_common = {
     .name = "vga",
     .version_id = 2,
     .minimum_version_id = 2,
-    .minimum_version_id_old = 2,
     .post_load = vga_common_post_load,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32(latch, VGACommonState),
         VMSTATE_UINT8(sr_index, VGACommonState),
         VMSTATE_PARTIAL_BUFFER(sr, VGACommonState, 8),
@@ -2257,7 +2255,7 @@ static const GraphicHwOps vga_ops = {
     .text_update = vga_update_text,
 };
 
-void vga_common_init(VGACommonState *s, Object *obj)
+void vga_common_init(VGACommonState *s, Object *obj, bool global_vmstate)
 {
     int i, j, v, b;
 
@@ -2294,7 +2292,7 @@ void vga_common_init(VGACommonState *s, Object *obj)
 
     s->is_vbe_vmstate = 1;
     memory_region_init_ram(&s->vram, obj, "vga.vram", s->vram_size);
-    vmstate_register_ram_global(&s->vram);
+    vmstate_register_ram(&s->vram, global_vmstate ? NULL : DEVICE(obj));
     xen_register_framebuffer(&s->vram);
     s->vram_ptr = memory_region_get_ram_ptr(&s->vram);
     s->get_bpp = vga_get_bpp;
@@ -2356,8 +2354,6 @@ void vga_init(VGACommonState *s, Object *obj, MemoryRegion *address_space,
 {
     MemoryRegion *vga_io_memory;
     const MemoryRegionPortio *vga_ports, *vbe_ports;
-    PortioList *vga_port_list = g_new(PortioList, 1);
-    PortioList *vbe_port_list = g_new(PortioList, 1);
 
     qemu_register_reset(vga_reset, s);
 
@@ -2372,12 +2368,13 @@ void vga_init(VGACommonState *s, Object *obj, MemoryRegion *address_space,
                                         1);
     memory_region_set_coalescing(vga_io_memory);
     if (init_vga_ports) {
-        portio_list_init(vga_port_list, obj, vga_ports, s, "vga");
-        portio_list_add(vga_port_list, address_space_io, 0x3b0);
+        portio_list_init(&s->vga_port_list, obj, vga_ports, s, "vga");
+        portio_list_set_flush_coalesced(&s->vga_port_list);
+        portio_list_add(&s->vga_port_list, address_space_io, 0x3b0);
     }
     if (vbe_ports) {
-        portio_list_init(vbe_port_list, obj, vbe_ports, s, "vbe");
-        portio_list_add(vbe_port_list, address_space_io, 0x1ce);
+        portio_list_init(&s->vbe_port_list, obj, vbe_ports, s, "vbe");
+        portio_list_add(&s->vbe_port_list, address_space_io, 0x1ce);
     }
 }
 

@@ -86,16 +86,15 @@ static void cpu_openrisc_load_kernel(ram_addr_t ram_size,
                     kernel_filename);
             exit(1);
         }
+        cpu->env.pc = entry;
     }
-
-    cpu->env.pc = entry;
 }
 
-static void openrisc_sim_init(QEMUMachineInitArgs *args)
+static void openrisc_sim_init(MachineState *machine)
 {
-    ram_addr_t ram_size = args->ram_size;
-    const char *cpu_model = args->cpu_model;
-    const char *kernel_filename = args->kernel_filename;
+    ram_addr_t ram_size = machine->ram_size;
+    const char *cpu_model = machine->cpu_model;
+    const char *kernel_filename = machine->kernel_filename;
     OpenRISCCPU *cpu = NULL;
     MemoryRegion *ram;
     int n;
@@ -139,7 +138,6 @@ static QEMUMachine openrisc_sim_machine = {
     .init = openrisc_sim_init,
     .max_cpus = 1,
     .is_default = 1,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void openrisc_sim_machine_init(void)

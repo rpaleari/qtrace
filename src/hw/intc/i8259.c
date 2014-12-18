@@ -150,7 +150,7 @@ static void pic_set_irq(void *opaque, int irq, int level)
 #endif
 #ifdef DEBUG_IRQ_LATENCY
     if (level) {
-        irq_time[irq_index] = qemu_get_clock_ns(vm_clock);
+        irq_time[irq_index] = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
     }
 #endif
 
@@ -228,7 +228,7 @@ int pic_read_irq(DeviceState *d)
 #ifdef DEBUG_IRQ_LATENCY
     printf("IRQ%d latency=%0.3fus\n",
            irq,
-           (double)(qemu_get_clock_ns(vm_clock) -
+           (double)(qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) -
                     irq_time[irq]) * 1000000.0 / get_ticks_per_sec());
 #endif
     DPRINTF("pic_interrupt: irq=%d\n", irq);
@@ -265,7 +265,8 @@ static void pic_ioport_write(void *opaque, hwaddr addr64,
             s->init4 = val & 1;
             s->single_mode = val & 2;
             if (val & 0x08) {
-                hw_error("level sensitive irq not supported");
+                qemu_log_mask(LOG_UNIMP,
+                              "i8259: level sensitive irq not supported\n");
             }
         } else if (val & 0x08) {
             if (val & 0x04) {
@@ -412,7 +413,7 @@ static const MemoryRegionOps pic_elcr_ioport_ops = {
     },
 };
 
-static void pic_realize(DeviceState *dev, Error **err)
+static void pic_realize(DeviceState *dev, Error **errp)
 {
     PICCommonState *s = PIC_COMMON(dev);
     PICClass *pc = PIC_GET_CLASS(dev);
@@ -425,7 +426,7 @@ static void pic_realize(DeviceState *dev, Error **err)
     qdev_init_gpio_out(dev, s->int_out, ARRAY_SIZE(s->int_out));
     qdev_init_gpio_in(dev, pic_set_irq, 8);
 
-    pc->parent_realize(dev, err);
+    pc->parent_realize(dev, errp);
 }
 
 void pic_info(Monitor *mon, const QDict *qdict)

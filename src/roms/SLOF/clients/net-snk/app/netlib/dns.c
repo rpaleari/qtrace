@@ -10,7 +10,7 @@
  *     IBM Corporation - initial implementation
  *****************************************************************************/
 
-/*>>>>>>>>>>>>>>>>>>>>> DEFINITIONS & DECLARATIONS <<<<<<<<<<<<<<<<<<<<<<*/
+/********************** DEFINITIONS & DECLARATIONS ***********************/
 
 #include <dns.h>
 #include <stdio.h>
@@ -20,6 +20,7 @@
 
 #include <ethernet.h>
 #include <ipv4.h>
+#include <ipv6.h>
 #include <udp.h>
 
 #define DNS_FLAG_MSGTYPE    0xF800	/**< Message type mask (opcode) */
@@ -31,6 +32,7 @@
 #define DNS_RCODE_NERROR    0       /**< "No errors" code           */
 
 #define DNS_QTYPE_A         1       /**< A 32-bit IP record type */
+#define DNS_QTYPE_AAAA      0x1c    /**< 128-bit IPv6 record type */
 #define DNS_QTYPE_CNAME     5       /**< Canonical name record type */
 
 #define DNS_QCLASS_IN       1       /**< Query class for internet msgs */
@@ -61,13 +63,13 @@ struct dnshdr {
 };
 
 
-/*>>>>>>>>>>>>>>>>>>>>>>>>>>>> PROTOTYPES <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<*/
+/***************************** PROTOTYPES ********************************/
 
 static void
-dns_send_query(int8_t * domain_name);
+dns_send_query(int8_t * domain_name, uint8_t ip_version);
 
 static void
-fill_dnshdr(uint8_t * packet, int8_t * domain_name);
+fill_dnshdr(uint8_t * packet, int8_t * domain_name, uint8_t ip_version);
 
 static uint8_t *
 dns_extract_name(uint8_t * dnsh, int8_t * head, int8_t * domain_name);
@@ -78,16 +80,18 @@ urltohost(char * url, char * host_name);
 static int8_t
 hosttodomain(char * host_name, char * domain_name);
 
-/*>>>>>>>>>>>>>>>>>>>>>>>>>>> LOCAL VARIABLES <<<<<<<<<<<<<<<<<<<<<<<<<<<*/
+/**************************** LOCAL VARIABLES ****************************/
 
 static uint8_t ether_packet[ETH_MTU_SIZE];
-static int32_t dns_server_ip     = 0;
-static int32_t dns_result_ip     = 0;
-static int8_t  dns_error         = 0;        /**< Stores error code or 0 */
+static int32_t dns_server_ip       = 0;
+static uint8_t dns_server_ipv6[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static int32_t dns_result_ip       = 0;
+static uint8_t dns_result_ipv6[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static int8_t  dns_error           = 0;        /**< Stores error code or 0 */
 static int8_t  dns_domain_name[0x100];       /**< Raw domain name        */
 static int8_t  dns_domain_cname[0x100];      /**< Canonical domain name  */
 
-/*>>>>>>>>>>>>>>>>>>>>>>>>>>> IMPLEMENTATION <<<<<<<<<<<<<<<<<<<<<<<<<<<<*/
+/**************************** IMPLEMENTATION *****************************/
 
 /**
  * DNS: Initialize the environment for DNS client.
@@ -100,13 +104,17 @@ static int8_t  dns_domain_cname[0x100];      /**< Canonical domain name  */
  * @see                  dns_get_ip
  */
 int8_t
-dns_init(uint32_t _dns_server_ip) {
-	dns_server_ip = _dns_server_ip;
+dns_init(uint32_t _dns_server_ip, uint8_t _dns_server_ipv6[16], uint8_t ip_version)
+{
+	if(ip_version == 6)
+		memcpy(dns_server_ipv6, _dns_server_ipv6, 16);
+	else
+		dns_server_ip = _dns_server_ip;
 	return 0;
 }
 
 /**
- * DNS: For given URL retrieves IPv4 from DNS-server.
+ * DNS: For given URL retrieves IPv4/IPv6 from DNS-server.
  *      <p>
  *      URL can be given in one of the following form: <ul>
  *      <li> scheme with full path with (without) user and password
@@ -124,7 +132,8 @@ dns_init(uint32_t _dns_server_ip) {
  *                   FALSE - error condition occurs.
  */
 int8_t
-dns_get_ip(int8_t * url, uint32_t * domain_ip) {
+dns_get_ip(int8_t * url, uint8_t * domain_ip, uint8_t ip_version)
+{
 	/* this counter is used so that we abort after 30 DNS request */
 	int32_t i;
 	/* this buffer stores host name retrieved from url */
@@ -152,16 +161,19 @@ dns_get_ip(int8_t * url, uint32_t * domain_ip) {
 	}
 
 	// Use DNS-server to obtain IP
-	dns_result_ip = 0;
-	dns_error     = 0;
+	if (ip_version == 6)
+		memset(dns_result_ipv6, 0, 16);
+	else
+		dns_result_ip = 0;
+	dns_error = 0;
 	strcpy((char *) dns_domain_cname, "");
 
 	for(i = 0; i < 30; ++i) {
 		// Use canonical name in case we obtained it
 		if (strlen((char *) dns_domain_cname))
-		  dns_send_query(dns_domain_cname);
+		  dns_send_query(dns_domain_cname, ip_version);
 		else
-		  dns_send_query(dns_domain_name);
+		  dns_send_query(dns_domain_name, ip_version);
 
 		// setting up a timer with a timeout of one seconds
 		set_timer(TICKS_SEC);
@@ -169,8 +181,12 @@ dns_get_ip(int8_t * url, uint32_t * domain_ip) {
 			receive_ether();
 			if (dns_error)
 				return 0; // FALSE - error
-			if (dns_result_ip != 0) {
-				(* domain_ip) = dns_result_ip;
+			if ((dns_result_ip != 0) && (ip_version == 4)) {
+				memcpy(domain_ip, &dns_result_ip, 4);
+				return 1; // TRUE - success (domain IP retrieved)
+			}
+			else if ((dns_result_ipv6[0] != 0) && (ip_version == 6)) {
+				memcpy(domain_ip, dns_result_ipv6, 16);
 				return 1; // TRUE - success (domain IP retrieved)
 			}
 		} while (get_timer() > 0);
@@ -195,7 +211,8 @@ dns_get_ip(int8_t * url, uint32_t * domain_ip) {
  * @see               dnshdr
  */
 int32_t
-handle_dns(uint8_t * packet, int32_t packetsize) {
+handle_dns(uint8_t * packet, int32_t packetsize)
+{
 	struct dnshdr * dnsh = (struct dnshdr *) packet;
 	uint8_t * resp_section = packet + sizeof(struct dnshdr);
 	/* This string stores domain name from DNS-packets */
@@ -260,6 +277,10 @@ handle_dns(uint8_t * packet, int32_t packetsize) {
 						return -1;
 					}
 					break;
+                                case DNS_QTYPE_AAAA :
+                                        memcpy(dns_result_ipv6, (resp_section + 10), 16);
+                                        return 0; // IP successfully obtained
+                                        break;
 				}
 			}
 			// continue with next record in answer section
@@ -280,27 +301,39 @@ handle_dns(uint8_t * packet, int32_t packetsize) {
  * @see                handle_dns
  */
 static void
-dns_send_query(int8_t * domain_name) {
+dns_send_query(int8_t * domain_name, uint8_t ip_version)
+{
 	int qry_len = strlen((char *) domain_name) + 5;
+	int iphdr_len = (ip_version == 4) ? sizeof(struct iphdr) : sizeof(struct ip6hdr);
+	ip6_addr_t server_ipv6;
 
-	uint32_t packetsize = sizeof(struct iphdr) +
+	uint32_t packetsize = iphdr_len +
 	                      sizeof(struct udphdr) + sizeof(struct dnshdr) +
 	                      qry_len;
 
 	memset(ether_packet, 0, packetsize);
 	fill_dnshdr(&ether_packet[
-	            sizeof(struct iphdr) + sizeof(struct udphdr)],
-	            domain_name);
-	fill_udphdr(&ether_packet[
-	            sizeof(struct iphdr)], sizeof(struct dnshdr) +
-	            sizeof(struct udphdr) + qry_len,
+	            iphdr_len + sizeof(struct udphdr)],
+	            domain_name,
+		    ip_version);
+	fill_udphdr(&ether_packet[iphdr_len],
+		    sizeof(struct dnshdr) +
+		    sizeof(struct udphdr) + qry_len,
 	            UDPPORT_DNSC, UDPPORT_DNSS);
-	fill_iphdr(ether_packet,
-	           sizeof(struct dnshdr) + sizeof(struct udphdr) +
-	           sizeof(struct iphdr) + qry_len,
-	           IPTYPE_UDP, 0, dns_server_ip);
+	if (ip_version == 4) {
+		fill_iphdr(ether_packet,
+			   sizeof(struct dnshdr) + sizeof(struct udphdr) +
+			   iphdr_len + qry_len,
+			   IPTYPE_UDP, 0, dns_server_ip);
+	} else {
+		memcpy(server_ipv6.addr, dns_server_ipv6, 16);
+		fill_ip6hdr(ether_packet,
+			    sizeof(struct dnshdr) + sizeof(struct udphdr) + qry_len,
+			    IPTYPE_UDP, get_ipv6_address(),
+			    &server_ipv6);
+	}
 
-	send_ipv4(ether_packet, packetsize);
+	send_ip(ether_packet, packetsize);
 }
 
 /**
@@ -320,7 +353,8 @@ dns_send_query(int8_t * domain_name) {
  * @see                fill_ethhdr
  */
 static void
-fill_dnshdr(uint8_t * packet, int8_t * domain_name) {
+fill_dnshdr(uint8_t * packet, int8_t * domain_name, uint8_t ip_version)
+{
 	struct dnshdr * dnsh = (struct dnshdr *) packet;
 	uint8_t * qry_section = packet + sizeof(struct dnshdr);
 
@@ -332,7 +366,10 @@ fill_dnshdr(uint8_t * packet, int8_t * domain_name) {
 	qry_section += strlen((char *) domain_name) + 1;
 
 	// fill QTYPE (ask for IP)
-	* (uint16_t *) qry_section = htons(DNS_QTYPE_A);
+	if (ip_version == 4)
+		* (uint16_t *) qry_section = htons(DNS_QTYPE_A);
+	else
+		* (uint16_t *) qry_section = htons(DNS_QTYPE_AAAA);
 	qry_section += 2;
 	// fill QCLASS (IN is a standard class for Internet)
 	* (uint16_t *) qry_section = htons(DNS_QCLASS_IN);
@@ -353,7 +390,8 @@ fill_dnshdr(uint8_t * packet, int8_t * domain_name) {
  * @see                dnshdr
  */
 static uint8_t *
-dns_extract_name(uint8_t * dnsh, int8_t * head, int8_t * domain_name) {
+dns_extract_name(uint8_t * dnsh, int8_t * head, int8_t * domain_name)
+{
 	int8_t * tail = domain_name;
 	int8_t * ptr = head;
 	int8_t * next_section = NULL;
@@ -405,7 +443,8 @@ dns_extract_name(uint8_t * dnsh, int8_t * head, int8_t * domain_name) {
  *                    FALSE - host name > 255 octets or empty.
  */
 static int8_t
-urltohost(char * url, char * host_name) {
+urltohost(char * url, char * host_name)
+{
 	uint16_t length1;
 	uint16_t length2;
 
@@ -455,7 +494,8 @@ urltohost(char * url, char * host_name) {
  *                     FALSE - host name > 255 octets or label > 63 octets.
  */
 static int8_t
-hosttodomain(char * host_name, char * domain_name) {
+hosttodomain(char * host_name, char * domain_name)
+{
 	char * domain_iter = domain_name;
 	char * host_iter   = host_name;
 

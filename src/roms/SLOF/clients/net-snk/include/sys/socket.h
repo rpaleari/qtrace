@@ -15,8 +15,6 @@
 #define _SOCKET_H
 #include <stdint.h>
 
-#include "systemcall.h"
-
 #define AF_PACKET 0
 #define AF_INET   1
 #define AF_INET6  2
@@ -45,7 +43,7 @@ struct sockaddr {
 
 int socket(int, int, int, char *);
 int sendto(int, const void *, int, int, const void *, int);
-int send(int, void *, int, int);
+int send(int, const void *, int, int);
 int recv(int, void *, int, int);
 
 #define htonl(x) x

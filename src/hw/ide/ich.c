@@ -83,7 +83,7 @@ static const VMStateDescription vmstate_ich9_ahci = {
     .name = "ich9_ahci",
     .unmigratable = 1, /* Still buggy under I/O load */
     .version_id = 1,
-    .fields = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(parent_obj, AHCIPCIState),
         VMSTATE_AHCI(ahci, AHCIPCIState),
         VMSTATE_END_OF_LIST()
@@ -116,7 +116,7 @@ static int pci_ich9_ahci_init(PCIDevice *dev)
     dev->config[0x90]   = 1 << 6; /* Address Map Register - AHCI mode */
 
     msi_init(dev, 0x50, 1, true, false);
-    d->ahci.irq = dev->irq[0];
+    d->ahci.irq = pci_allocate_irq(dev);
 
     pci_register_bar(dev, ICH9_IDP_BAR, PCI_BASE_ADDRESS_SPACE_IO,
                      &d->ahci.idp);
@@ -145,6 +145,7 @@ static void pci_ich9_uninit(PCIDevice *dev)
 
     msi_uninit(dev);
     ahci_uninit(&d->ahci);
+    qemu_free_irq(d->ahci.irq);
 }
 
 static void ich_ahci_class_init(ObjectClass *klass, void *data)

@@ -14,36 +14,48 @@
 #endif
 
 /* Notable syscall registers, to ease porting to different architectures */
+#ifdef TARGET_X86_64
+#define QTRACE_REG_SYSCALL_RESULT rax
+#else
 #define QTRACE_REG_SYSCALL_RESULT eax
+#endif
 
 /* Stringification */
 #define _XSTR(s) _STR(s)
 #define _STR(s) #s
 
-typedef struct {
+enum CpuRegister {
   /* General-purpose registers */
-  target_ulong eax;
-  target_ulong ecx;
-  target_ulong esp;
-  target_ulong ebp;
+
+  RegisterEax, RegisterEcx, RegisterEdx, RegisterEbx,
+  RegisterEsp, RegisterEbp, RegisterEsi, RegisterEdi,
+#ifdef TARGET_X86_64
+  RegisterRax = RegisterEax, RegisterRcx = RegisterEcx,
+  RegisterRdx = RegisterEdx, RegisterRbx = RegisterEbx,
+  RegisterRsp = RegisterEsp, RegisterRbp = RegisterEbp,
+  RegisterRsi = RegisterEsi, RegisterRdi = RegisterEdi,
+
+  RegisterR8,  RegisterR9,  RegisterR10, RegisterR11,
+  RegisterR12, RegisterR13, RegisterR14, RegisterR15,
+#endif
 
   /* Control registers */
-  target_ulong cr3;
+  RegisterCr3,
 
   /* Program counter */
-  target_ulong pc;
+  RegisterPc,
 
   /* Segments */
-  target_ulong cs_base;
-  target_ulong fs_base;
-} CpuRegisters;
+  RegisterCsBase, RegisterFsBase, RegisterGsBase,
+};
 
 /*
    Callbacks prototypes
  */
 typedef int (*qtrace_func_memread)(target_ulong addr, unsigned char *buffer,
                                    int len);
-typedef int (*qtrace_func_regread)(CpuRegisters *regs);
+typedef int (*qtrace_func_regread)(enum CpuRegister reg, target_ulong *value);
+typedef uint64_t (*qtrace_func_msrread)(target_ulong num);
 typedef int (*qtrace_func_tbflush)(void);
 typedef hwaddr (*qtrace_func_va2phy)(target_ulong va);
 
@@ -54,10 +66,11 @@ extern "C" {
     Initialize the whole QTrace subsystem. This function is invoked only once
     during QEMU main() procedure
   */
-  int qtrace_initialize(qtrace_func_memread   func_peek,
-                        qtrace_func_regread   func_regs,
-                        qtrace_func_tbflush   func_tbflush,
-                        qtrace_func_va2phy    func_va2phy);
+  int qtrace_initialize(qtrace_func_memread func_peek,
+                        qtrace_func_regread func_regs,
+                        qtrace_func_msrread func_rdmsr,
+                        qtrace_func_tbflush func_tbflush,
+                        qtrace_func_va2phy func_va2phy);
 
   /*
      Returns "true" if system call number "sysno" should be processed,

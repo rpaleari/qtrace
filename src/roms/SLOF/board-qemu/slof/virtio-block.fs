@@ -18,7 +18,7 @@ FALSE VALUE initialized?
 
 \ Required interface for deblocker
 
-200 CONSTANT block-size
+200 VALUE block-size
 8000 CONSTANT max-transfer 
 
 INSTANCE VARIABLE deblocker
@@ -29,13 +29,18 @@ virtiodev virtio-setup-vd
 \ Quiesce the virtqueue of this device so that no more background
 \ transactions can be pending.
 : shutdown  ( -- )
-   virtiodev virtio-blk-shutdown
-   FALSE to initialized?
+    initialized? IF
+        my-phandle node>path open-dev ?dup IF
+            virtiodev virtio-blk-shutdown
+            close-dev
+        THEN
+        FALSE to initialized?
+    THEN
 ;
 
 \ Basic device initialization - which has only to be done once
 : init  ( -- )
-   virtiodev virtio-blk-init
+   virtiodev virtio-blk-init to block-size
    TRUE to initialized?
    ['] shutdown add-quiesce-xt
 ;
@@ -48,13 +53,13 @@ virtiodev virtio-setup-vd
 \ Standard node "open" function
 : open  ( -- okay? )
    open 0= IF false EXIT THEN
+   dup initialized? 0= AND IF
+      init
+   THEN
    0 0 s" deblocker" $open-package dup deblocker ! dup IF
       s" disk-label" find-package IF
          my-args rot interpose
       THEN
-   THEN
-   dup initialized? 0= AND IF
-      init
    THEN
    0<>
 ;
@@ -77,10 +82,8 @@ virtiodev virtio-setup-vd
 
 \ Set disk alias if none is set yet
 : (set-alias)
-   s" disk" find-alias 0= IF
-       s" disk" get-node node>path set-alias
-   ELSE
-      drop
+   s" disk" get-next-alias ?dup IF
+      get-node node>path set-alias
    THEN
 ;
 (set-alias)

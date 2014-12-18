@@ -1,4 +1,4 @@
-// Structure layout of cpu registers the the bios uses.
+// Structure layout of cpu registers that the bios uses.
 //
 // Copyright (C) 2008  Kevin O'Connor <kevin@koconnor.net>
 //
@@ -7,28 +7,13 @@
 #ifndef __BREGS_H
 #define __BREGS_H
 
-// CPU flag bitdefs
-#define F_CF (1<<0)
-#define F_ZF (1<<6)
-#define F_IF (1<<9)
-#define F_ID (1<<21)
+#include "types.h" // u16
+#include "x86.h" // F_CF
 
-// CR0 flags
-#define CR0_PG (1<<31) // Paging
-#define CR0_CD (1<<30) // Cache disable
-#define CR0_NW (1<<29) // Not Write-through
-#define CR0_PE (1<<0)  // Protection enable
-
-
-#ifndef __ASSEMBLY__
-
-#include "farptr.h" // struct segoff_s
 
 /****************************************************************
  * Registers saved/restored in romlayout.S
  ****************************************************************/
-
-#include "types.h" // u16
 
 #define UREG(ER, R, RH, RL) union { u32 ER; struct { u16 R; u16 R ## _hi; }; struct { u8 RL; u8 RH; u8 R ## _hilo; u8 R ## _hihi; }; }
 
@@ -91,7 +76,5 @@ set_code_invalid_silent(struct bregs *regs, u8 code)
     regs->ah = code;
     set_cf(regs, 1);
 }
-
-#endif // !__ASSEMBLY__
 
 #endif // bregs.h

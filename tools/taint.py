@@ -1,5 +1,8 @@
 """
 Copyright 2014, Roberto Paleari (@rpaleari)
+
+This module provides TaintEngine, a class which is basically used to dump taint
+information included in a syscall trace and perform some sanitity checks.
 """
 
 import logging
@@ -9,6 +12,7 @@ class TaintEngine(object):
         self.__trace = trace
 
     def __sanity_check(self, syscall):
+        """Perform some sanity checks on the given syscall object."""
         # Sanity check for matching header values, according to taint
         # dependencies
         for arg in syscall.arguments:
@@ -36,6 +40,7 @@ class TaintEngine(object):
                         print "FAILED"
 
     def dump(self, sanitychecks=False):
+        """Dump taint information for the current trace."""
         for sysid, syscall in self.__trace.iteritems():
             labels = syscall.getTaintLabels()
             if len(labels) == 0:

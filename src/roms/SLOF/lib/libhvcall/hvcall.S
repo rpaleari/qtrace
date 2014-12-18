@@ -2,11 +2,19 @@
 #define __ASSEMBLY__
 #include "macros.h"
 #include "libhvcall.h"
-	
+#include <termctrl.h>
+#include <product.h>
+
 #define HVCALL			.long 0x44000022
-	
 	.text
 	.align	3
+
+ENTRY(get_print_banner)
+	LOAD32(r4, print_version)
+	LOAD32(r5, print_version_end)
+	std	r4,0(r3)
+	std	r5,8(r3)
+	blr
 
 ENTRY(hv_generic)
 	HVCALL
@@ -107,6 +115,15 @@ ENTRY(hv_logical_memop)
 	mr	r4,r3
 	lis	r3,KVMPPC_H_LOGICAL_MEMOP@h
 	ori	r3,r3,KVMPPC_H_LOGICAL_MEMOP@l
+	HVCALL
+	blr
+
+ENTRY(hv_cas)
+	mr	r6,r5
+	mr	r5,r4
+	mr	r4,r3
+	lis	r3,KVMPPC_H_CAS@h
+	ori	r3,r3,KVMPPC_H_CAS@l
 	HVCALL
 	blr
 

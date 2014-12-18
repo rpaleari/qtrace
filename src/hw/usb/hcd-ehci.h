@@ -21,7 +21,6 @@
 #include "qemu/timer.h"
 #include "hw/usb.h"
 #include "monitor/monitor.h"
-#include "trace.h"
 #include "sysemu/dma.h"
 #include "sysemu/sysemu.h"
 #include "hw/pci/pci.h"
@@ -255,6 +254,7 @@ typedef QTAILQ_HEAD(EHCIQueueHead, EHCIQueue) EHCIQueueHead;
 
 struct EHCIState {
     USBBus bus;
+    DeviceState *device;
     qemu_irq irq;
     MemoryRegion mem;
     AddressSpace *as;

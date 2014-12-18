@@ -22,8 +22,8 @@ hex
 
 #include "base.fs"
 
-\ Adjust load-base to point to paflof-start / 2:
-paflof-start 1 rshift fff not and to load-base
+\ Set default load-base to 0x4000
+4000 to default-load-base
 
 \ Little-endian accesses.  Also known as `wrong-endian'.
 #include <little-endian.fs>
@@ -109,11 +109,27 @@ d# 512000000 VALUE tb-frequency   \ default value - needed for "ms" to work
 
 #include <scsi-loader.fs>
 
-360 cp
+340 cp
 
 #include "fdt.fs"
 
+360 cp
+
+#include <root.fs>
+
 370 cp
+
+: check-boot-menu
+   s" qemu,boot-menu" get-chosen IF
+      decode-int 1 = IF
+         ." Press F12 for boot menu." cr cr
+      THEN
+      2drop
+   THEN
+;
+check-boot-menu
+
+380 cp
 
 \ Grab rtas from qemu
 #include "rtas.fs"
@@ -148,6 +164,29 @@ check-for-nvramrc
 #include <loaders.fs>
 
 8a8 cp
+CREATE version-str 10 ALLOT
+0 value temp-ptr
+
+: dump-display-buffer
+    disp-ptr to temp-ptr
+    " SLOF **********************************************************************" terminal-write drop
+    cr
+    version-str get-print-version
+    version-str @                   \ start
+    version-str 8 + @               \ end
+    over - terminal-write drop
+    " Press 's' to enter Open Firmware." terminal-write drop
+    cr cr
+    temp-ptr disp-size > IF
+	temp-ptr disp-size MOD
+	dup
+	prevga-disp-buf + swap disp-size swap - terminal-write drop
+	temp-ptr disp-size MOD
+	prevga-disp-buf swap 1 - terminal-write drop
+    ELSE
+	prevga-disp-buf temp-ptr terminal-write drop
+    THEN
+;
 
 : enable-framebuffer-output  ( -- )
 \ enable output on framebuffer
@@ -155,8 +194,10 @@ check-for-nvramrc
       \ we need to open/close the screen device once
       \ before "ticking" display-emit to emit
       open-dev close-node
+      false to store-prevga?
       s" display-emit" $find  IF 
          to emit 
+	 dump-display-buffer
       ELSE
          2drop
       THEN
@@ -197,7 +238,13 @@ romfs-base 400000 0 ' claim CATCH IF ." claim failed!" cr 2drop THEN drop
 	    ." using hvterm" cr
             " hvterm" io
 	  ELSE
-	    ." and no default found" cr
+	    " /openprom" find-node ?dup IF
+		set-node
+		." and no default found, creating dev-null" cr
+		" dev-null.fs" included
+		" devnull-console" io
+		0 set-node
+	    THEN
 	  THEN
         THEN
     THEN
@@ -211,14 +258,12 @@ set-default-console
 
 0 VALUE direct-ram-boot-base
 0 VALUE direct-ram-boot-size
-CREATE boot-opd 10 ALLOT
 
 : (boot-ram)
     direct-ram-boot-size 0<> IF
         ." Booting from memory..." cr
-	direct-ram-boot-base boot-opd !
-	0 boot-opd 8 + !
-	s" boot-opd to go-entry" evaluate
+	s" go-args 2@ " evaluate
+	direct-ram-boot-base 0
 	s" true state-valid ! " evaluate
 	s" disable-watchdog go-64" evaluate
     THEN

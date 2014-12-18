@@ -9,6 +9,7 @@
 #include "config.h"
 #include "libopenbios/openbios.h"
 #include "libopenbios/bindings.h"
+#include "libopenbios/console.h"
 #include "asm/types.h"
 #include "dict.h"
 #include "kernel/kernel.h"
@@ -56,13 +57,13 @@ arch_init( void )
 #endif
 #ifdef CONFIG_DRIVER_IDE
 	setup_timers();
-	ob_ide_init("/pci/isa", 0x1f0, 0x3f4, 0x170, 0x374);
+	ob_ide_init("/pci/isa", 0x1f0, 0x3f6, 0x170, 0x376);
 #endif
 #ifdef CONFIG_DRIVER_FLOPPY
 	ob_floppy_init("/isa", "floppy0", 0x3f0, 0);
 #endif
 #ifdef CONFIG_XBOX
-	setup_video(0x3C00000, phys_to_virt(0x3C00000));
+	setup_video();
 
 	/* Force video to 32-bit depth */
 	VIDEO_DICT_VALUE(video.depth) = 32;
@@ -75,9 +76,12 @@ arch_init( void )
 	bind_func("(go)", go );
 }
 
+extern struct _console_ops arch_console_ops;
+
 int openbios(void)
 {
 #ifdef CONFIG_DEBUG_CONSOLE
+	init_console(arch_console_ops);
 #ifdef CONFIG_DEBUG_CONSOLE_SERIAL
 	uart_init(CONFIG_SERIAL_PORT, CONFIG_SERIAL_SPEED);
 #endif

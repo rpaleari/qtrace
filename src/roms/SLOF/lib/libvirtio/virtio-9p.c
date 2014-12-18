@@ -14,6 +14,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <byteorder.h>
+#include <cpu.h>
 
 #include "virtio-9p.h"
 #include "p9.h"
@@ -39,14 +40,13 @@ static int __buf_size;
 #define ROOT_FID	1
 #define FILE_FID	2
 #define TAG_SIZE	128
-#define sync()		asm volatile (" sync \n" ::: "memory")
 #define MIN(a,b)	((a)>(b)?(b):(a))
 
 
 #undef DEBUG
 //#define DEBUG
 #ifdef DEBUG
-#define dprintf(_x ...) printf(_x)
+#define dprintf(_x ...) do { printf(_x); } while(0)
 #else
 #define dprintf(_x ...)
 #endif
@@ -129,7 +129,7 @@ static int virtio_9p_transact(void *opaque, uint8_t *tx, int tx_size, uint8_t *r
 
 	/* Tell HV that the queue is ready */
 	vq_avail->ring[vq_avail->idx % vq_size] = id;
-	sync();
+	mb();
 	vq_avail->idx += 1;
 	virtio_queue_notify(dev, 0);
 
@@ -137,7 +137,7 @@ static int virtio_9p_transact(void *opaque, uint8_t *tx, int tx_size, uint8_t *r
 	i = 10000000;
 	while (*current_used_idx == last_used_idx && i-- > 0) {
 		// do something better
-		sync();
+		mb();
 	}
 	if (i == 0) {
 		return -1;

@@ -48,8 +48,8 @@ void nvram_init(uint32_t _fetch_token, uint32_t _store_token,
 	NVRAM_LENGTH = _nvram_length;
 	nvram_buffer = nvram_addr;
 
-	printf("\nNVRAM: size=%d, fetch=%x, store=%x\n", 
-	       NVRAM_LENGTH, fetch_token, store_token);
+	DEBUG("\nNVRAM: size=%d, fetch=%x, store=%x\n",
+		NVRAM_LENGTH, fetch_token, store_token);
 #endif
 }
 

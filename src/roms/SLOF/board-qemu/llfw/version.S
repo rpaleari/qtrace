@@ -21,6 +21,7 @@
 
 .global print_version
 print_version:
+	mflr	r4
 	bl	0f
 	.ascii	TERM_CTRL_RESET
 	.ascii	TERM_CTRL_CRSOFF
@@ -37,6 +38,5 @@ print_version:
 	.align	2
 0:
 	mflr	r3
-	bl	io_print
-
-	b	print_version_done
+	mtlr	r4
+	b	io_print

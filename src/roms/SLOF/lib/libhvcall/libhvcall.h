@@ -2,6 +2,7 @@
 #define __LIBHVCALL_H__
 
 #define H_SUCCESS		0
+#define H_HARDWARE		-1
 
 #define H_GET_TCE		0x1C
 #define H_PUT_TCE		0x20
@@ -21,7 +22,9 @@
 #define KVMPPC_HCALL_BASE       0xf000
 #define KVMPPC_H_RTAS           (KVMPPC_HCALL_BASE + 0x0)
 #define KVMPPC_H_LOGICAL_MEMOP  (KVMPPC_HCALL_BASE + 0x1)
-#define KVMPPC_HCALL_MAX        KVMPPC_H_LOGICAL_MEMOP
+/* Client Architecture support */
+#define KVMPPC_H_CAS            (KVMPPC_HCALL_BASE + 0x2)
+#define KVMPPC_HCALL_MAX        KVMPPC_H_CAS
 
 #ifndef __ASSEMBLY__
 
@@ -30,6 +33,7 @@ extern long hv_generic(unsigned long opcode, ...);
 extern void hv_putchar(char c, int hvtermno);
 extern char hv_getchar(int hvtermno);
 extern char hv_haschar(int hvtermno);
+extern void get_print_banner(unsigned long addr);
 
 extern int hv_send_crq(unsigned int unit, uint64_t *msgaddr);
 
@@ -91,6 +95,10 @@ extern unsigned long hv_logical_ci_store(unsigned long size, unsigned long addr,
 extern unsigned long hv_logical_memop(unsigned long dst, unsigned long src,
 				      unsigned long esize, unsigned long count,
 				      unsigned long op);
+extern int patch_broken_sc1(void *start, void *end, uint32_t *test_ins);
+
+extern unsigned long hv_cas(unsigned long vec, unsigned long buf,
+			unsigned long size);
 
 #endif /* __ASSEMBLY__ */
 

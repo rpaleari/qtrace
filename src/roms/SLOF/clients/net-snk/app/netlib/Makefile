@@ -23,7 +23,7 @@ CFLAGS += -DUSE_MTFTP
 endif
 
 OBJS    = ethernet.o ipv4.o udp.o tcp.o  dns.o bootp.o \
-	  dhcp.o
+	  dhcp.o ipv6.o dhcpv6.o icmpv6.o ndp.o
 
 ifeq ($(SNK_USE_MTFTP), 1)
 OBJS += mtftp.o

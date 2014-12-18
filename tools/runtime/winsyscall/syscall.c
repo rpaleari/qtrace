@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <assert.h>
 
-// extern int DoSyscall(int sysno, int nargs, DWORD *args);
+// extern int DoSyscall1(int sysno, int nargs, DWORD *args);
 extern int DoSyscall(int sysno, DWORD *args);
 FARPROC KiFastSystemCall;
 

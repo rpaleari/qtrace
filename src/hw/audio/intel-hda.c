@@ -40,11 +40,11 @@ static const TypeInfo hda_codec_bus_info = {
     .instance_size = sizeof(HDACodecBus),
 };
 
-void hda_codec_bus_init(DeviceState *dev, HDACodecBus *bus,
+void hda_codec_bus_init(DeviceState *dev, HDACodecBus *bus, size_t bus_size,
                         hda_codec_response_func response,
                         hda_codec_xfer_func xfer)
 {
-    qbus_create_inplace(&bus->qbus, TYPE_HDA_BUS, dev, NULL);
+    qbus_create_inplace(bus, bus_size, TYPE_HDA_BUS, dev, NULL);
     bus->response = response;
     bus->xfer = xfer;
 }
@@ -245,7 +245,7 @@ static void intel_hda_update_int_sts(IntelHDAState *d)
 
     /* update global status */
     if (sts & d->int_ctl) {
-        sts |= (1 << 31);
+        sts |= (1U << 31);
     }
 
     d->int_sts = sts;
@@ -257,7 +257,7 @@ static void intel_hda_update_irq(IntelHDAState *d)
     int level;
 
     intel_hda_update_int_sts(d);
-    if (d->int_sts & (1 << 31) && d->int_ctl & (1 << 31)) {
+    if (d->int_sts & (1U << 31) && d->int_ctl & (1U << 31)) {
         level = 1;
     } else {
         level = 0;
@@ -269,7 +269,7 @@ static void intel_hda_update_irq(IntelHDAState *d)
             msi_notify(&d->pci, 0);
         }
     } else {
-        qemu_set_irq(d->pci.irq[0], level);
+        pci_set_irq(&d->pci, level);
     }
 }
 
@@ -444,6 +444,7 @@ static bool intel_hda_xfer(HDACodecDevice *dev, uint32_t stnr, bool output,
         }
     }
     if (d->dp_lbase & 0x01) {
+        s = st - d->st;
         addr = intel_hda_addr(d->dp_lbase & ~0x01, d->dp_ubase);
         stl_le_pci_dma(&d->pci, addr + 8*s, st->lpib);
     }
@@ -526,7 +527,7 @@ static void intel_hda_get_wall_clk(IntelHDAState *d, const IntelHDAReg *reg)
 {
     int64_t ns;
 
-    ns = qemu_get_clock_ns(vm_clock) - d->wall_base_ns;
+    ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) - d->wall_base_ns;
     d->wall_clk = (uint32_t)(ns * 24 / 1000);  /* 24 MHz */
 }
 
@@ -573,7 +574,7 @@ static void intel_hda_set_st_ctl(IntelHDAState *d, const IntelHDAReg *reg, uint3
     if (st->ctl & 0x01) {
         /* reset */
         dprint(d, 1, "st #%d: reset\n", reg->stream);
-        st->ctl = 0;
+        st->ctl = SD_STS_FIFO_READY << 24;
     }
     if ((st->ctl & 0x02) != (old & 0x02)) {
         uint32_t stnr = (st->ctl >> 20) & 0x0f;
@@ -828,6 +829,7 @@ static const struct IntelHDAReg regtab[] = {
         .wclear   = 0x1c000000,                                       \
         .offset   = offsetof(IntelHDAState, st[_i].ctl),              \
         .whandler = intel_hda_set_st_ctl,                             \
+        .reset    = SD_STS_FIFO_READY << 24                           \
     },                                                                \
     [ ST_REG(_i, ICH6_REG_SD_LPIB) ] = {                              \
         .stream   = _i,                                               \
@@ -899,7 +901,7 @@ static const IntelHDAReg *intel_hda_reg_find(IntelHDAState *d, hwaddr addr)
 {
     const IntelHDAReg *reg;
 
-    if (addr >= sizeof(regtab)/sizeof(regtab[0])) {
+    if (addr >= ARRAY_SIZE(regtab)) {
         goto noreg;
     }
     reg = regtab+addr;
@@ -1024,7 +1026,7 @@ static void intel_hda_regs_reset(IntelHDAState *d)
     uint32_t *addr;
     int i;
 
-    for (i = 0; i < sizeof(regtab)/sizeof(regtab[0]); i++) {
+    for (i = 0; i < ARRAY_SIZE(regtab); i++) {
         if (regtab[i].name == NULL) {
             continue;
         }
@@ -1111,7 +1113,7 @@ static void intel_hda_reset(DeviceState *dev)
     HDACodecDevice *cdev;
 
     intel_hda_regs_reset(d);
-    d->wall_base_ns = qemu_get_clock_ns(vm_clock);
+    d->wall_base_ns = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
 
     /* reset codecs */
     QTAILQ_FOREACH(kid, &d->codecs.qbus.children, sibling) {
@@ -1142,7 +1144,7 @@ static int intel_hda_init(PCIDevice *pci)
         msi_init(&d->pci, 0x50, 1, true, false);
     }
 
-    hda_codec_bus_init(DEVICE(pci), &d->codecs,
+    hda_codec_bus_init(DEVICE(pci), &d->codecs, sizeof(d->codecs),
                        intel_hda_response, intel_hda_xfer);
 
     return 0;
@@ -1174,7 +1176,7 @@ static int intel_hda_post_load(void *opaque, int version)
 static const VMStateDescription vmstate_intel_hda_stream = {
     .name = "intel-hda-stream",
     .version_id = 1,
-    .fields = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32(ctl, IntelHDAStream),
         VMSTATE_UINT32(lpib, IntelHDAStream),
         VMSTATE_UINT32(cbl, IntelHDAStream),
@@ -1190,7 +1192,7 @@ static const VMStateDescription vmstate_intel_hda = {
     .name = "intel-hda",
     .version_id = 1,
     .post_load = intel_hda_post_load,
-    .fields = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(pci, IntelHDAState),
 
         /* registers */

@@ -21,6 +21,8 @@
 #define VIRTIO_STAT_DRIVER_OK		4
 #define VIRTIO_STAT_FAILED		128
 
+#define VIRTIO_TIMEOUT		        5000 /* 5 sec timeout */
+
 /* Definitions for vring_desc.flags */
 #define VRING_DESC_F_NEXT	1	/* buffer continues via the next field */
 #define VRING_DESC_F_WRITE	2	/* buffer is write-only (otherwise read-only) */
@@ -77,7 +79,9 @@ extern struct vring_used *virtio_get_vring_used(struct virtio_device *dev, int q
 extern void virtio_reset_device(struct virtio_device *dev);
 extern void virtio_queue_notify(struct virtio_device *dev, int queue);
 extern void virtio_set_status(struct virtio_device *dev, int status);
+extern void virtio_set_qaddr(struct virtio_device *dev, int queue, unsigned int qaddr);
 extern void virtio_set_guest_features(struct virtio_device *dev, int features);
+extern void virtio_get_host_features(struct virtio_device *dev, int *features);
 extern uint64_t virtio_get_config(struct virtio_device *dev, int offset, int size);
 extern int __virtio_read_config(struct virtio_device *dev, void *dst,
 				int offset, int len);

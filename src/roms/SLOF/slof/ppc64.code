@@ -252,3 +252,23 @@ PRIM(DEC_X40)
 	PUSH;
 	asm volatile("mfdec %0" : "=r"(TOS));
 MIRP
+
+PRIM(BM_X2d_ALLOCATOR_X2d_INIT)
+	unsigned long blocksize = TOS.u; POP;
+	unsigned long size = TOS.u; POP;
+	unsigned long start = TOS.u;
+	TOS.u = SLOF_bm_allocator_init(start, size, blocksize);
+MIRP
+
+PRIM(BM_X2d_ALLOC)
+	unsigned long size = TOS.u; POP;
+	unsigned long handle = TOS.u;
+	TOS.u = SLOF_bm_alloc(handle, size);
+MIRP
+
+PRIM(BM_X2d_FREE)
+	unsigned long size = TOS.u; POP;
+	unsigned long addr = TOS.u; POP;
+	unsigned long handle = TOS.u; POP;
+	SLOF_bm_free(handle, addr, size);
+MIRP

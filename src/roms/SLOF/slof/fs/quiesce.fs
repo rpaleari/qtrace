@@ -11,11 +11,13 @@
 \ ****************************************************************************/
 
 
-10 CONSTANT quiesce-xt#
+100 CONSTANT quiesce-xt#
 
 \ The array with the quiesce execution tokens:
 CREATE quiesce-xts quiesce-xt# cells allot
 quiesce-xts quiesce-xt# cells erase
+
+0 VALUE quiesce-done?
 
 
 \ Add a token to the quiesce execution token array:
@@ -42,6 +44,8 @@ quiesce-xts quiesce-xt# cells erase
 \ is in a sane state (e.g. assert that no background DMA is
 \ running anymore)
 : quiesce  ( -- )
+   quiesce-done? IF EXIT THEN
+   true to quiesce-done?
    quiesce-xt# 0 DO
       quiesce-xts I cells +    ( arrayptr )
       @ dup IF                 ( xt )

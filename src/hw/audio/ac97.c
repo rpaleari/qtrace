@@ -280,12 +280,12 @@ static void update_sr (AC97LinkState *s, AC97BusMasterRegs *r, uint32_t new_sr)
     if (level) {
         s->glob_sta |= masks[r - s->bm_regs];
         dolog ("set irq level=1\n");
-        qemu_set_irq (s->dev.irq[0], 1);
+        pci_irq_assert(&s->dev);
     }
     else {
         s->glob_sta &= ~masks[r - s->bm_regs];
         dolog ("set irq level=0\n");
-        qemu_set_irq (s->dev.irq[0], 0);
+        pci_irq_deassert(&s->dev);
     }
 }
 
@@ -1163,8 +1163,7 @@ static const VMStateDescription vmstate_ac97_bm_regs = {
     .name = "ac97_bm_regs",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32 (bdbar, AC97BusMasterRegs),
         VMSTATE_UINT8 (civ, AC97BusMasterRegs),
         VMSTATE_UINT8 (lvi, AC97BusMasterRegs),
@@ -1211,9 +1210,8 @@ static const VMStateDescription vmstate_ac97 = {
     .name = "ac97",
     .version_id = 3,
     .minimum_version_id = 2,
-    .minimum_version_id_old = 2,
     .post_load = ac97_post_load,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE (dev, AC97LinkState),
         VMSTATE_UINT32 (glob_cnt, AC97LinkState),
         VMSTATE_UINT32 (glob_sta, AC97LinkState),

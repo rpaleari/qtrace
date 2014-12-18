@@ -5,6 +5,7 @@ HTML output module for displaying syscall traces.
 """
 
 import os
+
 import output
 import trace.syscall
 
@@ -188,16 +189,16 @@ class HTMLOutputGenerator(output.OutputGenerator):
             defobj = self.getSyscallFromLabel(label)
             assert defobj is not None
 
-            data = '<span class="taint" title="Goto syscall #%d" ' \
-                   'onclick="javascript:gotoSyscall(%d);">%d</span>' % \
-                (defobj.obj.id, defobj.obj.id, label)
+            data = ('<span class="taint" title="Goto syscall #%d" '
+                   'onclick="javascript:gotoSyscall(%d);">%d</span>' %
+                    (defobj.obj.id, defobj.obj.id, label))
             tainthtml.append(data)
         return ", ".join(tainthtml)
 
     def __generateTaintDefs(self, arg):
         """
-        Generate HTML code to represent the taint labels _defined_ by system call
-        argument "arg".
+        Generate HTML code to represent the taint labels _defined_ by system
+        call argument "arg".
         """
 
         tainthtml = []

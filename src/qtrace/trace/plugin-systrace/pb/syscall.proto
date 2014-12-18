@@ -1,0 +1,114 @@
+package syscall;
+
+message TraceHeader {
+  enum TraceMagic {
+    TRACE_MAGIC = 0x0badb00b;
+  }
+
+  enum TargetOS {
+    ProfileUnknown      = 0x000;
+
+    // Windows
+    ProfileWindowsMask  = 0x100;
+
+    // Windows 32-bit
+    ProfileWindowsXPSP0 = 0x101;
+    ProfileWindowsXPSP1 = 0x102;
+    ProfileWindowsXPSP2 = 0x103;
+    ProfileWindowsXPSP3 = 0x104;
+    ProfileWindows7SP0  = 0x105;
+
+    // Windows 64-bit
+    ProfileWindows8_1   = 0x180;
+
+    // Linux
+    ProfileLinuxMask      = 0x200;
+    ProfileLinux64_3_2_0  = 0x201;
+    ProfileLinux64_3_14_0 = 0x202;
+
+    // OSx
+    ProfileOSXMask      = 0x300;
+    ProfileOSXMavericks = 0x301;
+  }
+
+  required fixed32 magic = 1;
+  required uint64 timestamp = 2;
+  required TargetOS targetos = 3;
+
+  // Does the trace provide taint information?
+  required bool hastaint = 4;
+}
+
+message Syscall {
+  message Process {
+    required uint64 pid  = 1;
+    required uint64 tid  = 2;
+    optional string name = 3;
+  }
+
+  required uint64 id       = 1;
+  required uint64 sysno    = 2;
+  required uint64 retval   = 3;
+  required Process process = 4;
+  repeated SyscallArg arg  = 5;
+
+  // Optional external data references, not belonging to any argument
+  repeated ExternalReference ref = 6;
+
+  // Optional taint label associated with the system call return address
+  optional uint32 taintlabel_retval = 7;
+}
+
+message DataInterval {
+  required uint64 offset = 1;
+  required bytes  data   = 2;
+}
+
+message SyscallArg {
+  // Argument address
+  required uint64 addr = 1;
+
+  // Argument input data stream (i.e., input arguments)
+  repeated DataInterval indata  = 2;
+
+  // Argument output data stream (i.e., output arguments)
+  repeated DataInterval outdata = 3;
+
+  // Argument direction (IN, OUT or IN/OUT)
+  enum Direction {
+       IN    = 0;
+       OUT   = 1;
+       INOUT = 2;
+  }
+  required Direction direction = 4;
+
+  // Argument offset inside parent data stream
+  required int32  offset   = 5;
+
+  // Pointers to sub-arguments
+  repeated SyscallArg ptr  = 6;
+
+  // Taint labels used by this argument
+  repeated uint32 taintlabels_in = 7;
+
+  // Taint labels defined by this argument
+  repeated uint32 taintlabels_out = 8;
+
+  // Track repeated accessess to the same location
+  message MemoryAccess {
+    // Call stack
+    repeated uint64 pc = 1;
+    required uint64 addr = 2;
+    required int32 size = 3;
+    required Direction direction = 4;
+  }
+  repeated MemoryAccess rep_read = 9;
+}
+
+// External data pointers, referenced during syscall execution but not
+// belonging to any syscall argument
+message ExternalReference {
+  required uint64 pc    = 1;
+  required uint64 addr  = 2;
+  required uint64 value = 3;
+}

@@ -67,7 +67,7 @@
 #define     CURTICNT        0x0090
 
 #define     TICK_TIMER_ENABLE   0x0100
-#define     TICNT_THRESHHOLD    2
+#define     TICNT_THRESHOLD     2
 
 
 #define     RTC_ENABLE          0x0001
@@ -118,7 +118,6 @@ static const VMStateDescription vmstate_exynos4210_rtc_state = {
     .name = "exynos4210.rtc",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(reg_intp, Exynos4210RTCState),
         VMSTATE_UINT32(reg_rtccon, Exynos4210RTCState),
@@ -429,7 +428,7 @@ static void exynos4210_rtc_write(void *opaque, hwaddr offset,
         s->reg_rtccon = value;
         break;
     case TICCNT:
-        if (value > TICNT_THRESHHOLD) {
+        if (value > TICNT_THRESHOLD) {
             s->reg_ticcnt = value;
         } else {
             fprintf(stderr,

@@ -19,39 +19,66 @@ defer client-exec
 defer callback
 defer continue-client
 
+0 VALUE chosen-node
+
+: chosen
+  chosen-node dup 0= IF
+    drop s" /chosen" find-node dup to chosen-node
+  THEN
+;
+
 : set-chosen ( prop len name len -- )
-  s" /chosen" find-node set-property ;
+  chosen set-property ;
 
 : get-chosen ( name len -- [ prop len ] success )
-  s" /chosen" find-node get-property 0= ;
+  chosen get-property 0= ;
 
-new-device
-  s" /" device-name
-  new-device
+\ Look for an exising root, create one if needed
+" /" find-node dup 0= IF
+    drop
+    new-device
+    s" /" device-name
+ELSE
+    extend-device
+THEN
+
+\ Create /chosen if it doesn't exist
+" /chosen" find-node dup 0= IF
+    drop
+    new-device
     s" chosen" device-name
     s" " encode-string s" bootargs" property
     s" " encode-string s" bootpath" property
-  finish-device
+    finish-device
+ELSE
+    drop
+THEN
 
-  new-device
+\ Create /aliases
+new-device
     s" aliases" device-name
-  finish-device
+finish-device
 
-  new-device
+\ Create /options
+new-device
     s" options" device-name
-  finish-device
+finish-device
 
-
-  new-device
+\ Create /openprom
+new-device
     s" openprom" device-name
     s" BootROM" device-type
-  finish-device
+finish-device
 
-  new-device 
+\ Create /packages
+new-device 
 #include <packages.fs>
-  finish-device
+finish-device
 
 : open true ;
 : close ;
+#include <archsupport.fs>
 
+\ Finish root
 finish-device
+

@@ -12,6 +12,7 @@
 #include "hw/loader.h"
 #include "elf.h"
 #include "exec/address-spaces.h"
+#include "sysemu/qtest.h"
 
 #define KERNEL_LOAD_ADDR 0x10000
 #define AN5206_MBAR_ADDR 0x10000000
@@ -19,11 +20,11 @@
 
 /* Board init.  */
 
-static void an5206_init(QEMUMachineInitArgs *args)
+static void an5206_init(MachineState *machine)
 {
-    ram_addr_t ram_size = args->ram_size;
-    const char *cpu_model = args->cpu_model;
-    const char *kernel_filename = args->kernel_filename;
+    ram_addr_t ram_size = machine->ram_size;
+    const char *cpu_model = machine->cpu_model;
+    const char *kernel_filename = machine->kernel_filename;
     M68kCPU *cpu;
     CPUM68KState *env;
     int kernel_size;
@@ -62,6 +63,9 @@ static void an5206_init(QEMUMachineInitArgs *args)
 
     /* Load kernel.  */
     if (!kernel_filename) {
+        if (qtest_enabled()) {
+            return;
+        }
         fprintf(stderr, "Kernel image must be specified\n");
         exit(1);
     }
@@ -89,7 +93,6 @@ static QEMUMachine an5206_machine = {
     .name = "an5206",
     .desc = "Arnewsh 5206",
     .init = an5206_init,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void an5206_machine_init(void)

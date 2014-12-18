@@ -38,6 +38,7 @@
 #include "hw/sysbus.h"
 #include "exec/address-spaces.h"
 #include "qemu/error-report.h"
+#include "sysemu/qtest.h"
 
 static struct _loaderparams {
     int ram_size;
@@ -132,13 +133,13 @@ static void mipsnet_init(int base, qemu_irq irq, NICInfo *nd)
 }
 
 static void
-mips_mipssim_init(QEMUMachineInitArgs *args)
+mips_mipssim_init(MachineState *machine)
 {
-    ram_addr_t ram_size = args->ram_size;
-    const char *cpu_model = args->cpu_model;
-    const char *kernel_filename = args->kernel_filename;
-    const char *kernel_cmdline = args->kernel_cmdline;
-    const char *initrd_filename = args->initrd_filename;
+    ram_addr_t ram_size = machine->ram_size;
+    const char *cpu_model = machine->cpu_model;
+    const char *kernel_filename = machine->kernel_filename;
+    const char *kernel_cmdline = machine->kernel_cmdline;
+    const char *initrd_filename = machine->initrd_filename;
     char *filename;
     MemoryRegion *address_space_mem = get_system_memory();
     MemoryRegion *isa = g_new(MemoryRegion, 1);
@@ -190,7 +191,8 @@ mips_mipssim_init(QEMUMachineInitArgs *args)
     } else {
         bios_size = -1;
     }
-    if ((bios_size < 0 || bios_size > BIOS_SIZE) && !kernel_filename) {
+    if ((bios_size < 0 || bios_size > BIOS_SIZE) &&
+        !kernel_filename && !qtest_enabled()) {
         /* Bail out if we have neither a kernel image nor boot vector code. */
         error_report("Could not load MIPS bios '%s', and no "
                      "-kernel argument was specified", filename);
@@ -232,7 +234,6 @@ static QEMUMachine mips_mipssim_machine = {
     .name = "mipssim",
     .desc = "MIPS MIPSsim platform",
     .init = mips_mipssim_init,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void mips_mipssim_machine_init(void)

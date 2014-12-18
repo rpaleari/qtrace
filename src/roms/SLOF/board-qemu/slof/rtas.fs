@@ -66,6 +66,12 @@ rtas-cb /rtas-control-block erase
 
 \    ." RTAS found, base=" rtas-base . ."  size=" rtas-size . cr
 
+    \ Patch the RTAS blob with our sc1 patcher if necessary
+    0
+    rtas-base
+    dup rtas-size +
+    check-and-patch-sc1
+
     device-end
 ;
 find-qemu-rtas

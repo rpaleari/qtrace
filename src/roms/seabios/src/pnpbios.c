@@ -4,31 +4,18 @@
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
-#include "util.h" // checksum
 #include "config.h" // BUILD_BIOS_ADDR
 #include "farptr.h" // SET_FARVAR
-
-struct pnpheader {
-    u32 signature;
-    u8 version;
-    u8 length;
-    u16 control;
-    u8 checksum;
-    u32 eventloc;
-    u16 real_ip;
-    u16 real_cs;
-    u16 prot_ip;
-    u32 prot_base;
-    u32 oemid;
-    u16 real_ds;
-    u32 prot_database;
-} PACKED;
+#include "output.h" // dprintf
+#include "std/pnpbios.h" // PNP_SIGNATURE
+#include "string.h" // checksum
+#include "util.h" // pnp_init
 
 extern struct pnpheader PNPHEADER;
 extern char pnp_string[];
 
 #if CONFIG_PNPBIOS
-struct pnpheader PNPHEADER __aligned(16) VAR16EXPORT = {
+struct pnpheader PNPHEADER __aligned(16) VARFSEG = {
     .signature = PNP_SIGNATURE,
     .version = 0x10,
     .length = sizeof(PNPHEADER),
@@ -41,10 +28,8 @@ struct pnpheader PNPHEADER __aligned(16) VAR16EXPORT = {
 // We need a copy of this string in the 0xf000 segment, but we are not
 // actually a PnP BIOS, so make sure it is *not* aligned, so OSes will
 // not see it if they scan.
-char pnp_string[] __aligned(2) VAR16VISIBLE = " $PnP";
+char pnp_string[] __aligned(2) VARFSEG = " $PnP";
 #endif
-
-#define FUNCTION_NOT_SUPPORTED 0x82
 
 // BBS - Get Version and Installation Check
 static u16
@@ -90,7 +75,7 @@ extern void entry_pnp_real(void);
 extern void entry_pnp_prot(void);
 
 void
-pnp_setup(void)
+pnp_init(void)
 {
     if (! CONFIG_PNPBIOS)
         return;

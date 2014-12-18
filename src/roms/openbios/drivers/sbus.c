@@ -141,219 +141,26 @@ uint16_t graphic_depth;
 static void
 ob_tcx_init(unsigned int slot, const char *path)
 {
-    phandle_t chosen, aliases;
+    char buf[6];
 
-    push_str(path);
-    fword("find-device");
+    printk("No display device located during SBus probe - falling back to internal TCX driver\n");
 
-    PUSH(slot);
-    fword("encode-int");
-    PUSH(0x00800000);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x00100000);
-    fword("encode-int");
-    fword("encode+");
+    /* Make the sbus node the current instance and active package for probing */
+    feval("active-package my-self");
+    push_str("/iommu/sbus");
+    feval("2dup find-device open-dev to my-self");
 
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x02000000);
-    fword("encode-int");
-    fword("encode+");
-    if (graphic_depth == 24) {
-        PUSH(0x00400000);
-    } else {
-        PUSH(0x00000001);
-    }
-    fword("encode-int");
-    fword("encode+");
-
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x04000000);
-    fword("encode-int");
-    fword("encode+");
-    if (graphic_depth == 24) {
-        PUSH(0x00400000);
-    } else {
-        PUSH(0x00000001);
-    }
-    fword("encode-int");
-    fword("encode+");
-
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x06000000);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x00800000);
-    fword("encode-int");
-    fword("encode+");
-
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x0a000000);
-    fword("encode-int");
-    fword("encode+");
-    if (graphic_depth == 24) {
-        PUSH(0x00400000);
-    } else {
-        PUSH(0x00000001);
-    }
-    fword("encode-int");
-    fword("encode+");
-
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x0c000000);
-    fword("encode-int");
-    fword("encode+");
-    if (graphic_depth == 24) {
-        PUSH(0x00800000);
-    } else {
-        PUSH(0x00000001);
-    }
-    fword("encode-int");
-    fword("encode+");
-
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x0e000000);
-    fword("encode-int");
-    fword("encode+");
-    if (graphic_depth == 24) {
-        PUSH(0x00800000);
-    } else {
-        PUSH(0x00000001);
-    }
-    fword("encode-int");
-    fword("encode+");
-
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x00700000);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x00001000);
-    fword("encode-int");
-    fword("encode+");
-
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x00200000);
-    fword("encode-int");
-    fword("encode+");
-    if (graphic_depth == 24) {
-        PUSH(0x00004000);
-    } else {
-        PUSH(0x00000004);
-    }
-    fword("encode-int");
-    fword("encode+");
-
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    if (graphic_depth == 24) {
-        PUSH(0x00301000);
-    } else {
-        PUSH(0x00300000);
-    }
-    fword("encode-int");
-    fword("encode+");
-    if (graphic_depth == 24) {
-        PUSH(0x00001000);
-    } else {
-        PUSH(0x0000081c);
-    }
-    fword("encode-int");
-    fword("encode+");
-
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x00000000);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x00010000);
-    fword("encode-int");
-    fword("encode+");
-
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x00240000);
-    fword("encode-int");
-    fword("encode+");
-    if (graphic_depth == 24) {
-        PUSH(0x00004000);
-    } else {
-        PUSH(0x00000004);
-    }
-    fword("encode-int");
-    fword("encode+");
-
-    PUSH(slot);
-    fword("encode-int");
-    fword("encode+");
-    PUSH(0x00280000);
-    fword("encode-int");
-    fword("encode+");
-    if (graphic_depth == 24) {
-        PUSH(0x00008000);
-    } else {
-        PUSH(0x00000001);
-    }
-    fword("encode-int");
-    fword("encode+");
-
-    push_str("reg");
-    fword("property");
-
-    PUSH((int)graphic_depth);
-    fword("encode-int");
-    push_str("depth");
-    fword("property");
-
-    if (graphic_depth == 8) {
-        push_str("true");
-        fword("encode-string");
-        push_str("tcx-8-bit");
-        fword("property");
-    }
-
-    /* Even with a 24-bit enabled TCX card, the control plane is
-       used in 8-bit mode. So force the video subsystem into 8-bit
-       mode before initialisation. */
-    if (graphic_depth == 24) {
-        VIDEO_DICT_VALUE(video.depth) = 8;
-        VIDEO_DICT_VALUE(video.rb) = VIDEO_DICT_VALUE(video.w);
-
-        chosen = get_cur_dev();
-        set_int_property(chosen, "linebytes", VIDEO_DICT_VALUE(video.rb));
-    }
-
-    bind_func("hw-set-color", tcx_hw_set_color);
-
-    /* Currently we don't have an SBus probe routine, so execute FCode
-       directly */
+    fword("new-device");
+    PUSH(0);
+    PUSH(0);
+    snprintf(buf, 6, "%x,0", slot);
+    push_str(buf);
+    fword("set-args");
     feval("['] tcx-driver-fcode 2 cells + 1 byte-load");
+    fword("finish-device");
 
-    chosen = find_dev("/chosen");
-    push_str(path);
-    fword("open-dev");
-    set_int_property(chosen, "screen", POP());
-
-    aliases = find_dev("/aliases");
-    set_property(aliases, "screen", path, strlen(path) + 1);
+    /* Restore */
+    feval("to my-self active-package!");
 }
 
 static void
@@ -445,9 +252,51 @@ ob_macio_init(unsigned int slot, uint64_t base, unsigned long offset)
 }
 
 static void
+sbus_probe_self(unsigned int slot, unsigned long offset)
+{
+    /* Wrapper for calling probe-self in Forth. This is mainly because some
+       drivers don't handle properties correctly when the sbus node is set
+       as the current instance during probe. */
+    char buf[6];
+
+    printk("Probing SBus slot %d offset %ld\n", slot, offset);
+
+    /* Make the sbus node the current instance and active package for probing */
+    feval("active-package my-self");
+    push_str("/iommu/sbus");
+    feval("open-dev to my-self");
+
+    PUSH(0);
+    PUSH(0);
+    snprintf(buf, 6, "%x,%lx", slot, offset);
+    push_str(buf);
+    fword("2dup");
+    fword("probe-self-sbus");
+
+    /* Restore */
+    feval("to my-self active-package!");
+}
+
+static int
+sbus_probe_sucess(void)
+{
+    /* Return true if the last sbus_probe_self() resulted in
+       the successful detection and execution of FCode */
+    fword("probe-fcode?");
+    return POP();
+}
+
+static void
 sbus_probe_slot_ss5(unsigned int slot, uint64_t base)
 {
-    // OpenBIOS and QEMU don't know how to do Sbus probing
+    /* Probe the slot */
+    sbus_probe_self(slot, 0);
+
+    /* If the device was successfully created by FCode then do nothing */
+    if (sbus_probe_sucess()) {
+        return;
+    }
+
     switch(slot) {
     case 3: // SUNW,tcx
         ob_tcx_init(slot, "/iommu/sbus/SUNW,tcx");
@@ -469,7 +318,14 @@ sbus_probe_slot_ss5(unsigned int slot, uint64_t base)
 static void
 sbus_probe_slot_ss10(unsigned int slot, uint64_t base)
 {
-    // OpenBIOS and QEMU don't know how to do Sbus probing
+    /* Probe the slot */
+    sbus_probe_self(slot, 0);
+
+    /* If the device was successfully created by FCode then do nothing */
+    if (sbus_probe_sucess()) {
+        return;
+    }
+
     switch(slot) {
     case 2: // SUNW,tcx
         ob_tcx_init(slot, "/iommu/sbus/SUNW,tcx");
@@ -487,7 +343,14 @@ sbus_probe_slot_ss10(unsigned int slot, uint64_t base)
 static void
 sbus_probe_slot_ss600mp(unsigned int slot, uint64_t base)
 {
-    // OpenBIOS and QEMU don't know how to do Sbus probing
+    /* Probe the slot */
+    sbus_probe_self(slot, 0);
+
+    /* If the device was successfully created by FCode then do nothing */
+    if (sbus_probe_sucess()) {
+        return;
+    }
+
     switch(slot) {
     case 2: // SUNW,tcx
         ob_tcx_init(slot, "/iommu/sbus/SUNW,tcx");

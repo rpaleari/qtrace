@@ -13,7 +13,7 @@ RunningProcess::RunningProcess(target_ulong cr3)
 }
 
 bool RunningProcess::canInitialize() const {
-  return gbl_context.windows->isKernelReady();
+  return gbl_context.guest->isKernelReady();
 }
 
 void RunningProcess::init(void) {
@@ -21,13 +21,14 @@ void RunningProcess::init(void) {
     return;
   }
 
-  TRACE("Performin OS-dependent initialization for process @%.8x", cr3_);
+  TRACE("Performing OS-dependent initialization for process @%.8x", cr3_);
 
   // Initialize PID, TID and process name fields
   int r;
 
   name_ = std::unique_ptr<std::string>(new std::string());
-  r = gbl_context.windows->getProcessData(pid_, tid_, *(name_.get()));
+  r = gbl_context.guest->getProcessData(pid_, tid_, *(name_.get()));
+
   if (r != 0) {
     // FIXME: error handling
   }

@@ -24,8 +24,13 @@ else
 ifneq (,$(wildcard ../.git))
 RELEASE=git-$(shell git rev-parse --short=16 HEAD)
 else
+ifneq (,$(shell cat ../VERSION))
+RELEASE="$(USER)@$(HOSTNAME) release $(shell cat ../VERSION)"
+export DRIVER_NAME=HEAD
+else
 RELEASE="$(USER)@$(HOSTNAME)(private build)"
 export DRIVER_NAME=HEAD
+endif
 endif
 endif
 
@@ -142,7 +147,6 @@ clean_gen:	clean_top
 	$(MAKE) -C ../romfs/tools BOARD=$(BOARD) clean
 	$(MAKE) -C ../tools clean
 	$(MAKE) -C ../other-licence clean
-	$(MAKE) -C ../drivers clean
 	$(MAKE) -C ../clients clean
 	@for dir in $(COMMON_LIBS); do \
 		$(MAKE) -C ../lib/$$dir clean || exit 1; \
@@ -152,7 +156,6 @@ distclean_gen:	clean_top
 	$(MAKE) -C ../romfs/tools BOARD=$(BOARD) distclean
 	$(MAKE) -C ../tools distclean
 	$(MAKE) -C ../other-licence distclean
-	$(MAKE) -C ../drivers distclean
 	$(MAKE) -C ../clients distclean
 	@for dir in $(COMMON_LIBS); do \
 		$(MAKE) -C ../lib/$$dir distclean || exit 1; \

@@ -27,7 +27,8 @@ STG1OBJ		 += stage2_head.o stage2.o comlib.o romfs_wrap.o nvramlog.o
 
 all: stage1.bin Cboot.o
 
-stage1.bin:	$(STG1OBJ) $(LIBCMNDIR)/libelf.a $(LIBCMNDIR)/libc.a
+stage1.bin:	$(STG1OBJ) $(LIBCMNDIR)/libelf.a $(LIBCMNDIR)/libc.a \
+		$(LIBCMNDIR)/libhvcall.a
 		$(LD) $(LDFLAGS1) -o stage1.elf $^
 		$(OBJCOPY) -O binary stage1.elf $@
 

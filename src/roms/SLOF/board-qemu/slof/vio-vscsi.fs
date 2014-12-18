@@ -12,8 +12,7 @@
 
 ." Populating " pwd
 
-0 CONSTANT vscsi-debug
-
+false VALUE vscsi-debug?
 0 VALUE vscsi-unit
 
 \ -----------------------------------------------------------
@@ -26,6 +25,7 @@
 \ CRQ related functions
 \ -----------------------------------------------------------
 
+0    VALUE     crq-real-base
 0    VALUE     crq-base
 0    VALUE     crq-dma
 0    VALUE     crq-offset
@@ -34,21 +34,23 @@
 CREATE crq 10 allot
 
 : crq-alloc ( -- )
-    \ XXX We rely on SLOF alloc-mem being aligned
-    CRQ-SIZE alloc-mem to crq-base 0 to crq-offset
+    \ Allocate enough to align to a page
+    CRQ-SIZE fff + alloc-mem to crq-real-base
+    \ align the result
+    crq-real-base fff + fffff000 AND to crq-base 0 to crq-offset
     crq-base l2dma to crq-dma
 ;
 
 : crq-free ( -- )
     vscsi-unit hv-free-crq
-    crq-base CRQ-SIZE free-mem 0 to crq-base
+    crq-real-base CRQ-SIZE fff + free-mem 0 to crq-base 0 to crq-real-base
 ;
 
 : crq-init ( -- res )
     \ Allocate CRQ. XXX deal with fail
     crq-alloc
 
-    vscsi-debug IF
+    vscsi-debug? IF
         ." VSCSI: allocated crq at " crq-base . cr
     THEN
 
@@ -68,7 +70,7 @@ CREATE crq 10 allot
 : crq-cleanup ( -- )
     crq-base 0 = IF EXIT THEN
 
-    vscsi-debug IF
+    vscsi-debug? IF
         ." VSCSI: freeing crq at " crq-base . cr
     THEN
     crq-free
@@ -80,11 +82,11 @@ CREATE crq 10 allot
 
 : crq-poll ( -- true | false)
     crq-offset crq-base + dup
-    vscsi-debug IF
+    vscsi-debug? IF
         ." VSCSI: crq poll " dup .
     THEN
     c@
-    vscsi-debug IF
+    vscsi-debug? IF
         ."  value=" dup . cr
     THEN
     80 and 0 <> IF
@@ -101,7 +103,7 @@ CREATE crq 10 allot
     dup not IF
         ." VSCSI: Timeout waiting response !" cr EXIT
     ELSE
-        vscsi-debug IF
+        vscsi-debug? IF
             ." VSCSI: got crq: " crq dup l@ . ."  " 4 + dup l@ . ."  "
 	    4 + dup l@ . ."  " 4 + l@ . cr
         THEN
@@ -252,6 +254,14 @@ struct
     0 field >srp-rsp-data
 constant /srp-rsp
 
+\ Constants for srp-rsp-flags
+01 CONSTANT SRP_RSP_FLAG_RSPVALID
+02 CONSTANT SRP_RSP_FLAG_SNSVALID
+04 CONSTANT SRP_RSP_FLAG_DOOVER
+05 CONSTANT SRP_RSP_FLAG_DOUNDER
+06 CONSTANT SRP_RSP_FLAG_DIOVER
+07 CONSTANT SRP_RSP_FLAG_DIUNDER
+
 \ Storage for up to 256 bytes SRP request */
 CREATE srp 100 allot
 0 VALUE srp-len
@@ -287,143 +297,125 @@ CREATE srp 100 allot
 ;
 
 : srp-send-cmd ( -- )
-    vscsi-debug IF
+    vscsi-debug? IF
         ." VSCSI: Sending SCSI cmd " srp >srp-cmd-cdb c@ . cr
     THEN
     srp srp-len srp-send-crq
 ;
 
-: srp-rsp-find-sense ( -- addr )
-    \ XXX FIXME: Always in same position
-    srp >srp-rsp-data
+: srp-rsp-find-sense ( -- addr len true | false )
+    srp >srp-rsp-flags c@ SRP_RSP_FLAG_SNSVALID and 0= IF
+        false EXIT
+    THEN
+    \ XXX FIXME: We assume the sense data is right at response
+    \            data. A different server might actually have both
+    \            some response data we need to skip *and* some sense
+    \            data.
+    srp >srp-rsp-data srp >srp-rsp-sense-len l@ true
 ;
 
-: srp-wait-rsp ( -- true | [ ascq asc sense-key false ] )
+\ Wait for a response to the last sent SRP command
+\ returns a SCSI status code or -1 (HW error).
+\
+: srp-wait-rsp ( -- stat )
     srp-wait-crq not IF false EXIT THEN
     dup 1 <> IF
         ." VSCSI: Invalid CRQ response tag, want 1 got " . cr
-	false EXIT
+	-1 EXIT
     THEN drop
     
     srp >srp-rsp-tag x@ dup 1 <> IF
         ." VSCSI: Invalid SRP response tag, want 1 got " . cr
-	false EXIT
+	-1 EXIT
     THEN drop
     
     srp >srp-rsp-status c@
-    vscsi-debug IF
+    vscsi-debug? IF
         ." VSCSI: Got response status: "
 	dup .status-text cr
     THEN
-
-    0 <> IF
-       srp-rsp-find-sense
-       scsi-get-sense-data
-       vscsi-debug IF
-           ." VSCSI: Sense key: " dup .sense-text cr	   
-       THEN
-       false EXIT
-    THEN
-    true
 ;
 
-
 \ -----------------------------------------------------------
-\ Core VSCSI
+\ Perform SCSI commands
 \ -----------------------------------------------------------
-
-CREATE sector d# 512 allot
 
 8000000000000000 INSTANCE VALUE current-target
 
-\ SCSI test-unit-read
-: test-unit-ready ( -- true | [ ascq asc sense-key false ] )
-    current-target srp-prep-cmd-nodata
-    srp >srp-cmd-cdb scsi-build-test-unit-ready
+\ SCSI command. We do *NOT* implement the "standard" execute-command
+\ because that doesn't have a way to return the sense buffer back, and
+\ we do have auto-sense with some hosts. Instead we implement a made-up
+\ do-scsi-command.
+\
+\ Note: stat is -1 for "hw error" (ie, error queuing the command or
+\ getting the response).
+\
+\ A sense buffer is returned whenever the status is non-0 however
+\ if sense-len is 0 then no sense data is actually present
+\
+
+: execute-scsi-command ( buf-addr buf-len dir cmd-addr cmd-len -- ... )
+                       ( ... [ sense-buf sense-len ] stat )
+    \ Stash command addr & len
+    >r >r				( buf-addr buf-len dir )
+    \ Command has no data ?
+    over 0= IF
+        3drop current-target srp-prep-cmd-nodata
+    ELSE
+        \ Command is a read ?
+        current-target swap IF srp-prep-cmd-read ELSE srp-prep-cmd-write THEN
+    THEN
+    \ Recover command and copy it to our srp buffer
+    r> r>
+    srp >srp-cmd-cdb swap move
     srp-send-cmd
     srp-wait-rsp
+
+    \ Check for HW error
+    dup -1 = IF
+        0 0 rot EXIT
+    THEN
+
+    \ Other error status
+    dup 0<> IF
+       srp-rsp-find-sense IF
+           vscsi-debug? IF
+               over scsi-get-sense-data
+               ." VSCSI: Sense key [ " dup . ." ] " .sense-text
+	       ."  ASC,ASCQ: " . . cr
+           THEN
+       ELSE 0 0
+           \ This relies on auto-sense from qemu... if that isn't always the
+           \ case we should request sense here
+           ." VSCSI: No sense data" cr
+       THEN
+       rot
+    THEN
 ;
 
-: inquiry ( -- true | false )
-    \ WARNING: ATAPI devices with libata seem to ignore the MSB of
-    \ the allocation length... let's only ask for ff bytes
-    sector ff current-target srp-prep-cmd-read
-    ff srp >srp-cmd-cdb scsi-build-inquiry
-    srp-send-cmd
-    srp-wait-rsp
-    dup not IF nip nip nip EXIT THEN \ swallow sense
-;
+\ --------------------------------
+\ Include the generic host helpers
+\ --------------------------------
 
-: report-luns ( -- true | false )
-    sector 200 current-target srp-prep-cmd-read
-    200 srp >srp-cmd-cdb scsi-build-report-luns
-    srp-send-cmd
-    srp-wait-rsp
-    dup not IF nip nip nip EXIT THEN \ swallow sense
-;
+" scsi-host-helpers.fs" included
 
-: read-capacity ( -- true | false )
-    sector scsi-length-read-cap-10 current-target srp-prep-cmd-read
-    srp >srp-cmd-cdb scsi-build-read-cap-10
-    srp-send-cmd
-    srp-wait-rsp
-    dup not IF nip nip nip EXIT THEN \ swallow sense    
-;
-
-: start-stop-unit ( state# -- true | false )
-    current-target srp-prep-cmd-nodata
-    srp >srp-cmd-cdb scsi-build-start-stop-unit
-    srp-send-cmd
-    srp-wait-rsp
-    dup not IF nip nip nip EXIT THEN \ swallow sense    
-;
-
-: get-media-event ( -- true | false )
-    sector scsi-length-media-event current-target srp-prep-cmd-read
-    srp >srp-cmd-cdb scsi-build-get-media-event
-    srp-send-cmd
-    srp-wait-rsp
-    dup not IF nip nip nip EXIT THEN \ swallow sense    
-;
-
-: read-blocks ( -- addr block# #blocks blksz -- [ #read-blocks true ] | false )
-    over * 					( addr block# #blocks len )    
-    >r rot r> 			                ( block# #blocks addr len )
-    5 0 DO
-      	2dup current-target
-	srp-prep-cmd-read                       ( block# #blocks addr len )
-        2swap					( addr len block# #blocks )
-        2dup srp >srp-cmd-cdb scsi-build-read-10 ( addr len block# #blocks )
-	2swap                                   ( block# #blocks addr len )
-        srp-send-cmd
- 	srp-wait-rsp
-	IF 2drop nip true UNLOOP EXIT THEN
-	srp >srp-rsp-status c@ 8 <> IF
-	    nip nip nip 2drop 2drop false EXIT
-	THEN
-	3drop
-	100 ms
-    LOOP
-    2drop 2drop false
-;
+TRUE VALUE first-time-init?
+0 VALUE open-count
 
 \ Cleanup behind us
 : vscsi-cleanup
-    \ ." VSCSI: Cleaning up" cr
+    vscsi-debug? IF ." VSCSI: Cleaning up" cr THEN
     crq-cleanup
+
     \ Disable TCE bypass:
     vscsi-unit 0 rtas-set-tce-bypass
 ;
 
 \ Initialize our vscsi instance
 : vscsi-init ( -- true | false )
-    ." VSCSI: Initializing" cr
+    vscsi-debug? IF ." VSCSI: Initializing" cr THEN
 
-    \ Can't use my-unit bcs we aren't instanciating (fix this ?)
-    " reg" get-node get-package-property IF
-        ." VSCSI: Not reg property !!!" 0
-    THEN
-    decode-int to vscsi-unit 2drop
+    my-unit to vscsi-unit
 
     \ Enable TCE bypass special qemu feature
     vscsi-unit 1 rtas-set-tce-bypass
@@ -437,7 +429,7 @@ CREATE sector d# 512 allot
         ." VSCSI: Error sending init command"
         crq-cleanup false EXIT
     THEN
-
+ 
     \ Wait reply
     crq-wait not IF
         crq-cleanup false EXIT
@@ -453,9 +445,36 @@ CREATE sector d# 512 allot
     \ with our qemu model
 
     \ Ensure we cleanup after booting
-    ['] vscsi-cleanup add-quiesce-xt
+    first-time-init? IF
+        ['] vscsi-cleanup add-quiesce-xt
+	false to first-time-init?
+    THEN
 
     true
+;
+
+: open
+    vscsi-debug? IF ." VSCSI: Opening (count is " open-count . ." )" cr THEN
+
+    open-count 0= IF
+        vscsi-init IF
+	    1 to open-count true
+	ELSE ." VSCSI initialization failed !" cr false THEN
+    ELSE
+        open-count 1 + to open-count
+        true
+    THEN
+;
+
+: close
+    vscsi-debug? IF ." VSCSI: Closing (count is " open-count . ." )" cr THEN
+
+    open-count 0> IF
+        open-count 1 - dup to open-count
+	0= IF
+	    vscsi-cleanup
+	THEN
+    THEN
 ;
 
 \ -----------------------------------------------------------
@@ -464,198 +483,36 @@ CREATE sector d# 512 allot
 
 \ We use SRP luns of the form 8000 | (bus << 8) | (id << 5) | lun
 \ in the top 16 bits of the 64-bit LUN
-: set-target ( srplun -- )
-    to current-target 
+: (set-target)
+    to current-target
 ;
 
-: dev-max-transfer ( -- n )
+: dev-generate-srplun ( target lun -- )
+    swap 8 << 8000 or or 30 <<
+;
+
+\ We obtain here a unit address on the stack, since our #address-cells
+\ is 2, the 64-bit srplun is split in two cells that we need to join
+\
+\ Note: This diverges a bit from the original OF scsi spec as the two
+\ cells are the 2 words of a 64-bit SRP LUN
+: set-address ( srplun.lo srplun.hi -- )
+    lxjoin (set-target)
+;
+
+\ We set max-transfer to a fixed value for now to avoid problems
+\ with some CD-ROM drives.
+\ FIXME: Check max transfer coming from VSCSI
+: max-transfer ( -- n )
     10000 \ Larger value seem to have problems with some CDROMs
 ;
 
-: dev-get-capacity ( -- blocksize #blocks )
-    \ Make sure that there are zeros in the buffer in case something goes wrong:
-    sector 10 erase
-    \ Now issue the read-capacity command
-    read-capacity not IF
-        0 0 EXIT
-    THEN
-    sector scsi-get-capacity-10
-;
-
-: dev-read-blocks ( -- addr block# #blocks blksize -- #read-blocks )
-    read-blocks    
-;
-
-: initial-test-unit-ready ( -- true | [ ascq asc sense-key false ] )
-    0 0 0 false
-    3 0 DO
-        2drop 2drop
-        test-unit-ready dup IF UNLOOP EXIT THEN
-    LOOP    
-;
-
-: compare-sense ( ascq asc key ascq2 asc2 key2 -- true | false )
-    3 pick =	    ( ascq asc key ascq2 asc2 keycmp )
-    swap 4 pick =   ( ascq asc key ascq2 keycmp asccmp )
-    rot 5 pick =    ( ascq asc key keycmp asccmp ascqcmp )
-    and and nip nip nip
-;
-
-0 CONSTANT CDROM-READY
-1 CONSTANT CDROM-NOT-READY
-2 CONSTANT CDROM-NO-DISK
-3 CONSTANT CDROM-TRAY-OPEN
-4 CONSTANT CDROM-INIT-REQUIRED
-5 CONSTANT CDROM-TRAY-MAYBE-OPEN
-
-: cdrom-status ( -- status )
-    initial-test-unit-ready
-    IF CDROM-READY EXIT THEN
-
-    vscsi-debug IF
-        ." TestUnitReady sense: " 3dup . . . cr
-    THEN
-
-    3dup 1 4 2 compare-sense IF
-        3drop CDROM-NOT-READY EXIT
-    THEN
-
-    get-media-event IF
-        sector w@ 4 >= IF
-	    sector 2 + c@ 04 = IF
-	        sector 5 + c@
-		dup 02 and 0<> IF drop 3drop CDROM-READY EXIT THEN
-		dup 01 and 0<> IF drop 3drop CDROM-TRAY-OPEN EXIT THEN
-		drop 3drop CDROM-NO-DISK EXIT
-	    THEN
-	THEN
-    THEN
-
-    3dup 2 4 2 compare-sense IF
-        3drop CDROM-INIT-REQUIRED EXIT
-    THEN
-    over 4 = over 2 = and IF
-        \ Format in progress... what do we do ? Just ignore
-	3drop CDROM-READY EXIT
-    THEN
-    over 3a = IF
-        3drop CDROM-NO-DISK EXIT
-    THEN
-
-    \ Other error...
-    3drop CDROM-TRAY-MAYBE-OPEN    
-;
-
-: cdrom-try-close-tray ( -- )
-    scsi-const-load start-stop-unit drop
-;
-
-: cdrom-must-close-tray ( -- )
-    scsi-const-load start-stop-unit not IF
-        ." Tray open !" cr -65 throw
-    THEN
-;
-
-: dev-prep-cdrom ( -- )
-    5 0 DO
-        cdrom-status CASE
-	    CDROM-READY           OF UNLOOP EXIT ENDOF
-	    CDROM-NO-DISK         OF ." No medium !" cr -65 THROW ENDOF
-	    CDROM-TRAY-OPEN       OF cdrom-must-close-tray ENDOF
-	    CDROM-INIT-REQUIRED   OF cdrom-try-close-tray ENDOF
-	    CDROM-TRAY-MAYBE-OPEN OF cdrom-try-close-tray ENDOF
-	ENDCASE
-	d# 1000 ms
-    LOOP
-    ." Drive not ready !" cr -65 THROW
-;
-
-: dev-prep-disk ( -- )
-    initial-test-unit-ready 0= IF
-        ." Disk not ready!" cr
-        3drop
-    THEN
-;
-
-: vscsi-create-disk	( srplun -- )
-    " disk" 0 " vio-vscsi-device.fs" included
-;
-
-: vscsi-create-cdrom	( srplun -- )
-    " cdrom" 1 " vio-vscsi-device.fs" included
-;
-
-: wrapped-inquiry ( -- true | false )
-    inquiry not IF false EXIT THEN
-    \ Skip devices with PQ != 0
-    sector inquiry-data>peripheral c@ e0 and 0 =
-;
-
 8 CONSTANT #dev
-
-: vscsi-read-lun     ( addr -- lun true | false )
-  dup c@ C0 AND CASE
-     40 OF w@-be 3FFF AND TRUE ENDOF
-     0  OF w@-be          TRUE ENDOF
-     dup dup OF ." Unsupported LUN format = " . cr FALSE ENDOF
-  ENDCASE
+: dev-max-target ( -- #max-target )
+    #dev
 ;
 
-: vscsi-report-luns ( -- array ndev )
-  \ array of pointers, up to 8 devices
-  #dev 3 << alloc-mem dup
-  0                                    ( devarray devcur ndev )   
-  #dev 0 DO
-     i 8 << 8000 or 30 << set-target
-     report-luns IF
-        sector l@                     ( devarray devcur ndev size )
-        sector 8 + swap               ( devarray devcur ndev lunarray size )
-        dup 8 + dup alloc-mem         ( devarray devcur ndev lunarray size size+ mem )
-        dup rot 0 fill                ( devarray devcur ndev lunarray size mem )
-        dup >r swap move r>           ( devarray devcur ndev mem )
-        dup sector l@ 3 >> 0 DO       ( devarray devcur ndev mem memcur )
-           dup dup vscsi-read-lun IF
-              j 8 << 8000 or or 30 << swap x! 8 +
-           ELSE
-              2drop
-           THEN
-        LOOP drop
-	rot                           ( devarray ndev mem devcur )
-        dup >r x! r> 8 +              ( devarray ndev devcur )
-        swap 1 +
-     THEN
-  LOOP
-  nip
-;
-
-: vscsi-find-disks      ( -- )   
-    ." VSCSI: Looking for devices" cr
-    vscsi-report-luns
-    0 ?DO
-       dup x@
-       BEGIN
-          dup x@
-          dup 0= IF drop TRUE ELSE
-             set-target wrapped-inquiry IF	
-	        ."   " current-target (u.) type ."  "
-	        \ XXX FIXME: Check top bits to ignore unsupported units
-	        \            and maybe provide better printout & more cases
-                \ XXX FIXME: Actually check for LUNs
-	        sector inquiry-data>peripheral c@ CASE
-                   0   OF ." DISK     : " current-target vscsi-create-disk  ENDOF
-                   5   OF ." CD-ROM   : " current-target vscsi-create-cdrom ENDOF
-                   7   OF ." OPTICAL  : " current-target vscsi-create-cdrom ENDOF
-                   e   OF ." RED-BLOCK: " current-target vscsi-create-disk  ENDOF
-                   dup dup OF ." ? (" . 8 emit 29 emit 5 spaces ENDOF
-                ENDCASE
-	        sector .inquiry-text cr
-	     THEN
-             8 + FALSE
-          THEN
-       UNTIL drop
-       8 +
-    LOOP drop
-;
+" scsi-probe-helpers.fs" included
 
 \ Remove scsi functions from word list
 scsi-close
@@ -674,21 +531,16 @@ scsi-close
     my-self >r
     dup to my-self
     \ Scan the VSCSI bus:
-    vscsi-init IF
-        vscsi-find-disks
-        setup-alias
-    THEN
+    scsi-find-disks
+    setup-alias
     \ Close the temporary instance:
     close-node
     r> to my-self
 ;
 
-\ Create a dummy "disk" node with no unit for the sake of
-\ the SLES11 installer. It is -not- a fully functional node
-\ you can open to access a disk at this stage
-new-device
-s" disk" device-name
-s" block" device-type      
-finish-device
+: vscsi-add-disk
+    " scsi-disk.fs" included
+;
 
+vscsi-add-disk
 vscsi-init-and-scan

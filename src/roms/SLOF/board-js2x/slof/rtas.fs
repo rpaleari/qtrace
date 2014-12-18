@@ -80,8 +80,6 @@ get-flashside to flashside?
    enter-rtas
 ;
 
-\ load-base wird in slof/fs/base.fs gesetzt... nicht überschreiben
-\ 2000000 CONSTANT load-base
 create blist 50 allot
 blist 50 erase
 
@@ -93,13 +91,13 @@ blist 50 erase
    \ no more block list
    0000000000000000 blist 8 + !
    \ first block
-   load-base 0 + blist 10 + !
+   get-load-base 0 + blist 10 + !
    80000 blist 18 + !
-   load-base 80000 + blist 20 + !
+   get-load-base 80000 + blist 20 + !
    80000 blist 28 + !
-   load-base 100000 + blist 30 + !
+   get-load-base 100000 + blist 30 + !
    80000 blist 38 + !
-   load-base 180000 + blist 40 + !
+   get-load-base 180000 + blist 40 + !
    8006C blist 48 + !
 ;
 
@@ -108,7 +106,7 @@ blist 50 erase
 : build-blocklist
    \ set length of block list
    \ length of flashfs at load-base is at offset 30... get it...
-   load-base 30 + @
+   get-load-base 30 + @
    \ calculate the number of blocks we need
    _block_size / 1 +
    \ total number of blocks is 2 (for header and block_list extension + (number of blocks for flashfs * 2 (1 for address 1 for length))
@@ -118,14 +116,14 @@ blist 50 erase
    \ no more block list
    0000000000000000 blist 8 + !
    \ length of flashfs at load-base is at offset 30... get it...
-   load-base 30 + @
+   get-load-base 30 + @
    \ i define one block to be 64K, so calculate the number of blocks we need and loop over them
    _block_size / 1 + 0 do
-      load-base _block_size i * +  \ which position of load-base to store
+      get-load-base _block_size i * +  \ which position of load-base to store
       blist 10 +             \ at what offset of blist ( 0x8 + for header 0x8 + for extension )
       i 10 * +               \ for each loop we have done 0x10 +
       !                      \ store it
-      load-base 30 + @
+      get-load-base 30 + @
       _block_size i * -      \ remaining length
       dup _block_size > 
       IF                     \ is the remaining length > block size
@@ -147,33 +145,33 @@ blist 50 erase
    0 blist c!
    48 blist 7 + c!
    \ first block
-   load-base 0 + blist 8 + !
+   get-load-base 0 + blist 8 + !
    80000 blist 10 + !
-   load-base 80000 + blist 18 + !
+   get-load-base 80000 + blist 18 + !
    80000 blist 20 + !
-   load-base 100000 + blist 28 + !
+   get-load-base 100000 + blist 28 + !
    80000 blist 30 + !
-   load-base 180000 + blist 38 + !
+   get-load-base 180000 + blist 38 + !
    8006C blist 40 + !
 ;
 
 : build-blocklist-v0
    \ set length of block list
    \ length of flashfs at load-base is at offset 30... get it...
-   load-base 30 + @
+   get-load-base 30 + @
    \ calculate the number of blocks we need
    _block_size / 1 +
    \ total number of blocks is 1 (for header + (number of blocks for flashfs * 2 (1 for address 1 for length))
    2 * 1 + 8 * blist !
    \ length of flashfs at load-base is at offset 30... get it...
-   load-base 30 + @
+   get-load-base 30 + @
    \ i define one block to be 64K, so calculate the number of blocks we need and loop over them
    _block_size / 1 + 0 do
-      load-base _block_size i * +  \ which position of load-base to store
+      get-load-base _block_size i * +  \ which position of load-base to store
       blist 8 +             \ at what offset of blist ( 0x8 + for header)
       i 10 * +               \ for each loop we have done 0x10 +
       !                      \ store it
-      load-base 30 + @
+      get-load-base 30 + @
       _block_size i * -      \ remaining length
       dup _block_size > 
       IF                     \ is the remaining length > block size
@@ -213,9 +211,9 @@ blist 50 erase
 
 \ for update-flash
 : flash-write  ( image-address -- status)
-   load-base >r to load-base build-blocklist-v0
+   load-base-override >r to load-base-override build-blocklist-v0
    blist rtas-ibm-update-flash-64
-   r> to load-base 0=  IF  true  ELSE  false  THEN
+   r> to load-base-override 0=  IF  true  ELSE  false  THEN
 ;
 
 : commit  1 rtas-ibm-manage-flash-image ;

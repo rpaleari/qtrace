@@ -47,7 +47,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <ipv4.h>
-//#include <ipv6.h>
+#include <ipv6.h>
 
 
 /*>>>>>>>>>>>>>>>>>>>>>>>>>>>>> LOCAL VARIABLES <<<<<<<<<<<<<<<<<<<<<<<<<*/
@@ -132,11 +132,11 @@ receive_ether(void) {
 	case ETHERTYPE_IP:
 		return handle_ipv4((uint8_t*) (ethh + 1),
 		                   bytes_received - sizeof(struct ethhdr));
-/*
+
 	case ETHERTYPE_IPv6:
 		return handle_ipv6(ether_packet + sizeof(struct ethhdr),
 				bytes_received - sizeof(struct ethhdr));
-*/
+
 	case ETHERTYPE_ARP:
 		return handle_arp((uint8_t*) (ethh + 1),
 		           bytes_received - sizeof(struct ethhdr));

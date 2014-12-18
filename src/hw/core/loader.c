@@ -54,6 +54,9 @@
 
 #include <zlib.h>
 
+bool option_rom_has_mr = false;
+bool rom_file_has_mr = true;
+
 static int roms_loaded;
 
 /* return the size or -1 if error */
@@ -282,12 +285,30 @@ static void *load_at(int fd, int offset, int size)
 #define SZ		64
 #include "hw/elf_ops.h"
 
+const char *load_elf_strerror(int error)
+{
+    switch (error) {
+    case 0:
+        return "No error";
+    case ELF_LOAD_FAILED:
+        return "Failed to load ELF";
+    case ELF_LOAD_NOT_ELF:
+        return "The image is not ELF";
+    case ELF_LOAD_WRONG_ARCH:
+        return "The image is from incompatible architecture";
+    case ELF_LOAD_WRONG_ENDIAN:
+        return "The image has incorrect endianness";
+    default:
+        return "Unknown error";
+    }
+}
+
 /* return < 0 if error, otherwise the number of bytes loaded in memory */
 int load_elf(const char *filename, uint64_t (*translate_fn)(void *, uint64_t),
              void *translate_opaque, uint64_t *pentry, uint64_t *lowaddr,
              uint64_t *highaddr, int big_endian, int elf_machine, int clear_lsb)
 {
-    int fd, data_order, target_data_order, must_swab, ret;
+    int fd, data_order, target_data_order, must_swab, ret = ELF_LOAD_FAILED;
     uint8_t e_ident[EI_NIDENT];
 
     fd = open(filename, O_RDONLY | O_BINARY);
@@ -300,8 +321,10 @@ int load_elf(const char *filename, uint64_t (*translate_fn)(void *, uint64_t),
     if (e_ident[0] != ELFMAG0 ||
         e_ident[1] != ELFMAG1 ||
         e_ident[2] != ELFMAG2 ||
-        e_ident[3] != ELFMAG3)
+        e_ident[3] != ELFMAG3) {
+        ret = ELF_LOAD_NOT_ELF;
         goto fail;
+    }
 #ifdef HOST_WORDS_BIGENDIAN
     data_order = ELFDATA2MSB;
 #else
@@ -315,6 +338,7 @@ int load_elf(const char *filename, uint64_t (*translate_fn)(void *, uint64_t),
     }
 
     if (target_data_order != e_ident[EI_DATA]) {
+        ret = ELF_LOAD_WRONG_ENDIAN;
         goto fail;
     }
 
@@ -327,12 +351,9 @@ int load_elf(const char *filename, uint64_t (*translate_fn)(void *, uint64_t),
                          pentry, lowaddr, highaddr, elf_machine, clear_lsb);
     }
 
-    close(fd);
-    return ret;
-
  fail:
     close(fd);
-    return -1;
+    return ret;
 }
 
 static void bswap_uboot_header(uboot_image_header_t *hdr)
@@ -576,6 +597,7 @@ struct Rom {
     size_t datasize;
 
     uint8_t *data;
+    MemoryRegion *mr;
     int isrom;
     char *fw_dir;
     char *fw_file;
@@ -605,8 +627,24 @@ static void rom_insert(Rom *rom)
     QTAILQ_INSERT_TAIL(&roms, rom, next);
 }
 
+static void *rom_set_mr(Rom *rom, Object *owner, const char *name)
+{
+    void *data;
+
+    rom->mr = g_malloc(sizeof(*rom->mr));
+    memory_region_init_ram(rom->mr, owner, name, rom->datasize);
+    memory_region_set_readonly(rom->mr, true);
+    vmstate_register_ram_global(rom->mr);
+
+    data = memory_region_get_ram_ptr(rom->mr);
+    memcpy(data, rom->data, rom->datasize);
+
+    return data;
+}
+
 int rom_add_file(const char *file, const char *fw_dir,
-                 hwaddr addr, int32_t bootindex)
+                 hwaddr addr, int32_t bootindex,
+                 bool option_rom)
 {
     Rom *rom;
     int rc, fd = -1;
@@ -645,7 +683,8 @@ int rom_add_file(const char *file, const char *fw_dir,
     rom_insert(rom);
     if (rom->fw_file && fw_cfg) {
         const char *basename;
-        char fw_file_name[56];
+        char fw_file_name[FW_CFG_MAX_FILE_PATH];
+        void *data;
 
         basename = strrchr(rom->fw_file, '/');
         if (basename) {
@@ -655,8 +694,15 @@ int rom_add_file(const char *file, const char *fw_dir,
         }
         snprintf(fw_file_name, sizeof(fw_file_name), "%s/%s", rom->fw_dir,
                  basename);
-        fw_cfg_add_file(fw_cfg, fw_file_name, rom->data, rom->romsize);
         snprintf(devpath, sizeof(devpath), "/rom@%s", fw_file_name);
+
+        if ((!option_rom || option_rom_has_mr) && rom_file_has_mr) {
+            data = rom_set_mr(rom, OBJECT(fw_cfg), devpath);
+        } else {
+            data = rom->data;
+        }
+
+        fw_cfg_add_file(fw_cfg, fw_file_name, data, rom->romsize);
     } else {
         snprintf(devpath, sizeof(devpath), "/rom@" TARGET_FMT_plx, addr);
     }
@@ -674,10 +720,12 @@ err:
     return -1;
 }
 
-int rom_add_blob(const char *name, const void *blob, size_t len,
-                 hwaddr addr)
+void *rom_add_blob(const char *name, const void *blob, size_t len,
+                   hwaddr addr, const char *fw_file_name,
+                   FWCfgReadCallback fw_callback, void *callback_opaque)
 {
     Rom *rom;
+    void *data = NULL;
 
     rom           = g_malloc0(sizeof(*rom));
     rom->name     = g_strdup(name);
@@ -687,7 +735,22 @@ int rom_add_blob(const char *name, const void *blob, size_t len,
     rom->data     = g_malloc0(rom->datasize);
     memcpy(rom->data, blob, len);
     rom_insert(rom);
-    return 0;
+    if (fw_file_name && fw_cfg) {
+        char devpath[100];
+
+        snprintf(devpath, sizeof(devpath), "/rom@%s", fw_file_name);
+
+        if (rom_file_has_mr) {
+            data = rom_set_mr(rom, OBJECT(fw_cfg), devpath);
+        } else {
+            data = rom->data;
+        }
+
+        fw_cfg_add_file_callback(fw_cfg, fw_file_name,
+                                 fw_callback, callback_opaque,
+                                 data, rom->romsize);
+    }
+    return data;
 }
 
 /* This function is specific for elf program because we don't need to allocate
@@ -712,12 +775,12 @@ int rom_add_elf_program(const char *name, void *data, size_t datasize,
 
 int rom_add_vga(const char *file)
 {
-    return rom_add_file(file, "vgaroms", 0, -1);
+    return rom_add_file(file, "vgaroms", 0, -1, true);
 }
 
 int rom_add_option(const char *file, int32_t bootindex)
 {
-    return rom_add_file(file, "genroms", 0, bootindex);
+    return rom_add_file(file, "genroms", 0, bootindex, true);
 }
 
 static void rom_reset(void *unused)
@@ -731,12 +794,25 @@ static void rom_reset(void *unused)
         if (rom->data == NULL) {
             continue;
         }
-        cpu_physical_memory_write_rom(rom->addr, rom->data, rom->datasize);
+        if (rom->mr) {
+            void *host = memory_region_get_ram_ptr(rom->mr);
+            memcpy(host, rom->data, rom->datasize);
+        } else {
+            cpu_physical_memory_write_rom(&address_space_memory,
+                                          rom->addr, rom->data, rom->datasize);
+        }
         if (rom->isrom) {
             /* rom needs to be written only once */
             g_free(rom->data);
             rom->data = NULL;
         }
+        /*
+         * The rom loader is really on the same level as firmware in the guest
+         * shadowing a ROM into RAM. Such a shadowing mechanism needs to ensure
+         * that the instruction cache for that new region is clear, so that the
+         * CPU definitely fetches its instructions from the just written data.
+         */
+        cpu_flush_icache_range(rom->addr, rom->datasize);
     }
 }
 
@@ -764,8 +840,12 @@ int rom_load_all(void)
         memory_region_unref(section.mr);
     }
     qemu_register_reset(rom_reset, NULL);
-    roms_loaded = 1;
     return 0;
+}
+
+void rom_load_done(void)
+{
+    roms_loaded = 1;
 }
 
 void rom_set_fw(FWCfgState *f)
@@ -779,6 +859,9 @@ static Rom *find_rom(hwaddr addr)
 
     QTAILQ_FOREACH(rom, &roms, next) {
         if (rom->fw_file) {
+            continue;
+        }
+        if (rom->mr) {
             continue;
         }
         if (rom->addr > addr) {
@@ -806,6 +889,9 @@ int rom_copy(uint8_t *dest, hwaddr addr, size_t size)
 
     QTAILQ_FOREACH(rom, &roms, next) {
         if (rom->fw_file) {
+            continue;
+        }
+        if (rom->mr) {
             continue;
         }
         if (rom->addr + rom->romsize < addr) {
@@ -866,7 +952,13 @@ void do_info_roms(Monitor *mon, const QDict *qdict)
     Rom *rom;
 
     QTAILQ_FOREACH(rom, &roms, next) {
-        if (!rom->fw_file) {
+        if (rom->mr) {
+            monitor_printf(mon, "%s"
+                           " size=0x%06zx name=\"%s\"\n",
+                           rom->mr->name,
+                           rom->romsize,
+                           rom->name);
+        } else if (!rom->fw_file) {
             monitor_printf(mon, "addr=" TARGET_FMT_plx
                            " size=0x%06zx mem=%s name=\"%s\"\n",
                            rom->addr, rom->romsize,

@@ -12,7 +12,7 @@
 void qtrace_qmp_qtrace_enable(Monitor *mon, const QDict *qdict);
 void qtrace_qmp_qtrace_query(Monitor *mon, const QDict *qdict);
 
-#ifdef CONFIG_QTRACE_SYSCALL
+#ifdef CONFIG_QTRACE_TRACER
 void qtrace_qmp_tracer_enable(Monitor *mon, const QDict *qdict);
 void qtrace_qmp_tracer_query(Monitor *mon, const QDict *qdict);
 #endif

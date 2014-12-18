@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <ctype.h>
 #include <cache.h>
+#include <allocator.h>
 
 #include ISTR(TARG,h)
 

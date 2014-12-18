@@ -621,10 +621,9 @@ static const VMStateDescription vmstate_cs4231a = {
     .name = "cs4231a",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .pre_load = cs4231a_pre_load,
     .post_load = cs4231a_post_load,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY (regs, CSState, CS_REGS),
         VMSTATE_BUFFER (dregs, CSState),
         VMSTATE_INT32 (dma_running, CSState),
@@ -673,7 +672,7 @@ static int cs4231a_init (ISABus *bus)
 }
 
 static Property cs4231a_properties[] = {
-    DEFINE_PROP_HEX32  ("iobase",  CSState, port, 0x534),
+    DEFINE_PROP_UINT32 ("iobase",  CSState, port, 0x534),
     DEFINE_PROP_UINT32 ("irq",     CSState, irq,  9),
     DEFINE_PROP_UINT32 ("dma",     CSState, dma,  3),
     DEFINE_PROP_END_OF_LIST (),

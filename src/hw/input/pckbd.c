@@ -281,7 +281,7 @@ static void kbd_write_command(void *opaque, hwaddr addr,
         kbd_update_irq(s);
         break;
     case KBD_CCMD_READ_INPORT:
-        kbd_queue(s, 0x00, 0);
+        kbd_queue(s, 0x80, 0);
         break;
     case KBD_CCMD_READ_OUTPORT:
         kbd_queue(s, s->outport, 0);
@@ -373,8 +373,7 @@ static const VMStateDescription vmstate_kbd = {
     .name = "pckbd",
     .version_id = 3,
     .minimum_version_id = 3,
-    .minimum_version_id_old = 3,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8(write_cmd, KBDState),
         VMSTATE_UINT8(status, KBDState),
         VMSTATE_UINT8(mode, KBDState),
@@ -462,8 +461,7 @@ static const VMStateDescription vmstate_kbd_isa = {
     .name = "pckbd",
     .version_id = 3,
     .minimum_version_id = 3,
-    .minimum_version_id_old = 3,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_STRUCT(kbd, ISAKBDState, 0, vmstate_kbd, KBDState),
         VMSTATE_END_OF_LIST()
     }
@@ -522,7 +520,6 @@ static void i8042_class_initfn(ObjectClass *klass, void *data)
     DeviceClass *dc = DEVICE_CLASS(klass);
 
     dc->realize = i8042_realizefn;
-    dc->no_user = 1;
     dc->vmsd = &vmstate_kbd_isa;
 }
 

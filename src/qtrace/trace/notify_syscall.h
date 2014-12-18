@@ -10,8 +10,7 @@
 extern "C" {
 #endif
 
-  void notify_syscall_start(target_ulong cr3, target_ulong sysno,
-                            target_ulong stack);
+  void notify_syscall_start(target_ulong cr3, target_ulong sysno);
 
   void notify_syscall_end(target_ulong cr3, target_ulong retval);
 

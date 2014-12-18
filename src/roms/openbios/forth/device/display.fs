@@ -51,7 +51,6 @@ create color-palette 100 cells allot
 0 value display-ih
 
 \ internal values
-0 value openbios-video-addr
 0 value openbios-video-height
 0 value openbios-video-width
 
@@ -356,6 +355,14 @@ defer fb8-invertrect
 
   my-self to display-ih
 
+  \ set /chosen display property
+  my-self active-package 0 to my-self
+  " /chosen" (find-dev) 0<> if
+    active-package!
+    display-ih encode-int " display" property
+  then
+  active-package! to my-self
+
   \ set defer functions to 8bit versions
 
   ['] fb8-draw-character to draw-character
@@ -392,7 +399,7 @@ defer fb8-invertrect
     1 pick @ ff00 and d# 8 rshift
     2 pick @ ff and
     i
-    s" hw-set-color" $find if
+    s" color!" $find if
       execute
     else
       2drop
@@ -408,7 +415,7 @@ defer fb8-invertrect
 
   \ If we have a startup splash then display it
   [IFDEF] CONFIG_MOL
-      startup-splash 2000 ms
+      mol-startup-splash 2000 ms
       fb8-erase-screen
   [THEN]
 ;

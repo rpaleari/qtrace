@@ -18,6 +18,7 @@ s" my-puid" my-phandle parent $call-static CONSTANT my-puid
 pci-bus-number 1+ CONSTANT my-bus
 
 s" pci-config-bridge.fs" included
+s" dma-function.fs" included
 
 \ generate the rom-fs filename from the vendor and device ID "pci-bridge_VENDORID_DEVICEID.fs"
 : filename ( -- str len )

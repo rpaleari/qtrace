@@ -16,7 +16,3 @@ get-flash-base VALUE flash-addr
 
 get-nvram-base CONSTANT nvram-base
 get-nvram-size CONSTANT nvram-size
-ff8f9000 CONSTANT sec-nvram-base  \ save area from phype.... not really known
-2000 CONSTANT sec-nvram-size
-
-nvram-base 20000 + CONSTANT nvram-log-be1-base

@@ -18,7 +18,7 @@ endif
 include $(TOP)/make.rules
 
 OBJS =  init.o systemcall.o crt0.o timer.o modules.o
-OBJS2 = entry.o lowmem.o
+OBJS2 = entry.o
 
 all: kernel.o 
 

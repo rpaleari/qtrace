@@ -43,9 +43,11 @@
     (sizeof(PVSCSICmdDescSetupRings)/sizeof(uint32_t))
 
 #define RS_GET_FIELD(rs_pa, field) \
-    (ldl_le_phys(rs_pa + offsetof(struct PVSCSIRingsState, field)))
+    (ldl_le_phys(&address_space_memory, \
+                 rs_pa + offsetof(struct PVSCSIRingsState, field)))
 #define RS_SET_FIELD(rs_pa, field, val) \
-    (stl_le_phys(rs_pa + offsetof(struct PVSCSIRingsState, field), val))
+    (stl_le_phys(&address_space_memory, \
+                 rs_pa + offsetof(struct PVSCSIRingsState, field), val))
 
 #define TYPE_PVSCSI "pvscsi"
 #define PVSCSI(obj) OBJECT_CHECK(PVSCSIState, (obj), TYPE_PVSCSI)
@@ -330,7 +332,7 @@ pvscsi_update_irq_status(PVSCSIState *s)
         return;
     }
 
-    qemu_set_irq(d->irq[0], !!should_raise);
+    pci_set_irq(d, !!should_raise);
 }
 
 static void
@@ -477,12 +479,13 @@ static void
 pvscsi_command_complete(SCSIRequest *req, uint32_t status, size_t resid)
 {
     PVSCSIRequest *pvscsi_req = req->hba_private;
-    PVSCSIState *s = pvscsi_req->dev;
+    PVSCSIState *s;
 
     if (!pvscsi_req) {
         trace_pvscsi_command_complete_not_found(req->tag);
         return;
     }
+    s = pvscsi_req->dev;
 
     if (resid) {
         /* Short transfer.  */
@@ -1088,7 +1091,8 @@ pvscsi_init(PCIDevice *pci_dev)
         return -ENOMEM;
     }
 
-    scsi_bus_new(&s->bus, &pci_dev->qdev, &pvscsi_scsi_info, NULL);
+    scsi_bus_new(&s->bus, sizeof(s->bus), DEVICE(pci_dev),
+                 &pvscsi_scsi_info, NULL);
     pvscsi_reset_state(s);
 
     return 0;
@@ -1139,10 +1143,9 @@ static const VMStateDescription vmstate_pvscsi = {
     .name = "pvscsi",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .pre_save = pvscsi_pre_save,
     .post_load = pvscsi_post_load,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(parent_obj, PVSCSIState),
         VMSTATE_UINT8(msi_used, PVSCSIState),
         VMSTATE_UINT32(resetting, PVSCSIState),

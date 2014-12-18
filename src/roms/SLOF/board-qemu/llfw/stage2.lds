@@ -17,9 +17,13 @@ OUTPUT_ARCH(powerpc:common64)
 ENTRY ( __start )
 
 SECTIONS {
+	__executable_start = .;
+
 	.text : {
 		*(.text)
 	}
+
+	__etext = .;
 
 	. = ALIGN(8);
 

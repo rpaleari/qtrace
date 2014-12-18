@@ -192,12 +192,12 @@ void TaintEngine::moveM2R(target_ulong addr, int size,
   for (int i = 0; i < std::min(size, regobj->getSize()); i++) {
     if (!mem_.isTaintedAddress(addr + i)) {
       if (regobj->isTaintedByte(i)) {
-      TRACE("Clearing M(%.8x) -> R%c(%.2x %s)", addr + i,
+      TRACE("Clearing M(%.8lx) -> R%c(%.2x %s)", addr + i,
             REGCHR(regtmp), reg, REGNAME(regobj));
       regobj->clear(i, 1);
       }
     } else {
-      TRACE("Taint moving M(%.8x) -> R%c(%.2x %s)", addr + i,
+      TRACE("Taint moving M(%.8lx) -> R%c(%.2x %s)", addr + i,
             REGCHR(regtmp), reg, REGNAME(regobj));
       regobj->set(mem_.getTaintLocation(addr + i));
     }
@@ -223,13 +223,13 @@ void TaintEngine::moveR2M(bool regtmp, target_ulong reg,
     if (!regobj->isTaintedByte(i)) {
       if (mem_.isTaintedAddress(addr + i)) {
         // Source is not tainted but destination is: clear
-        TRACE("Clearing R%c(%.2x %s) -> M(%.8x)",
+        TRACE("Clearing R%c(%.2x %s) -> M(%.8lx)",
               REGCHR(regtmp), reg, REGNAME(regobj), addr + i);
         mem_.clear(addr+i);
       }
     } else {
       // Source is tainted: move
-      TRACE("Taint moving R%c(%.2x %s) -> M(%.8x)",
+      TRACE("Taint moving R%c(%.2x %s) -> M(%.8lx)",
               REGCHR(regtmp), reg, REGNAME(regobj), addr + i);
       mem_.set(regobj->getTaintLocation(i), addr+i);
     }
@@ -263,5 +263,17 @@ void TaintEngine::copyMemoryLabels(std::set<int> &labels,
       TaintLocation *loc = mem_.getTaintLocation(a);
       loc->copy(labels);
     }
+  }
+}
+
+void TaintEngine::copyRegisterLabels(std::set<int> &labels,
+				     target_ulong regno) {
+  ShadowRegister *regobj = getRegister(false, regno);
+  for (int i = 0; i < regobj->getSize(); i++) {
+    if (!regobj->isTaintedByte(i)) {
+      continue;
+    }
+    TaintLocation *loc = regobj->getTaintLocation(i);
+    loc->copy(labels);
   }
 }

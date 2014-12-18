@@ -50,8 +50,8 @@ class Node(object):
         self.__attr = {}
 
     def __str__(self):
-        s = "Node %d, label '%s', %d successors, %d predecessors" % \
-            (self.__idz, self.__value, len(self.__suc), len(self.__pre))
+        s = ("Node %d, label '%s', %d successors, %d predecessors" %
+             (self.__idz, self.__value, len(self.__suc), len(self.__pre)))
         return s
 
     def __eq__(self, other):

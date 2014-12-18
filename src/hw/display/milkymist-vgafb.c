@@ -290,7 +290,7 @@ static int milkymist_vgafb_init(SysBusDevice *dev)
             "milkymist-vgafb", R_MAX * 4);
     sysbus_init_mmio(dev, &s->regs_region);
 
-    s->con = graphic_console_init(DEVICE(dev), &vgafb_ops, s);
+    s->con = graphic_console_init(DEVICE(dev), 0, &vgafb_ops, s);
 
     return 0;
 }
@@ -305,9 +305,8 @@ static const VMStateDescription vmstate_milkymist_vgafb = {
     .name = "milkymist-vgafb",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .post_load = vgafb_post_load,
-    .fields      = (VMStateField[]) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(regs, MilkymistVgafbState, R_MAX),
         VMSTATE_END_OF_LIST()
     }

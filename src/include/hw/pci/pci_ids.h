@@ -53,6 +53,7 @@
 /* Vendors and devices.  Sort key: vendor first, device next. */
 
 #define PCI_VENDOR_ID_LSI_LOGIC          0x1000
+#define PCI_DEVICE_ID_LSI_53C810         0x0001
 #define PCI_DEVICE_ID_LSI_53C895A        0x0012
 #define PCI_DEVICE_ID_LSI_SAS1078        0x0060
 
@@ -145,7 +146,6 @@
 
 #define PCI_VENDOR_ID_XEN                0x5853
 #define PCI_DEVICE_ID_XEN_PLATFORM       0x0001
-#define PCI_DEVICE_ID_XEN_PVDEVICE       0x0002
 
 #define PCI_VENDOR_ID_NEC                0x1033
 #define PCI_DEVICE_ID_NEC_UPD720200      0x0194

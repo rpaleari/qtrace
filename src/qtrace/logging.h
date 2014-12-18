@@ -59,7 +59,7 @@ int log_init(const char *filename);
 
 /* Internal logging function. Log macros eventually use this function to write
    log messages. Should not be directly invoked by external modules */
-void qtrace_log_(const char *f, unsigned int l, const char *tag, 
+void qtrace_log_(const char *f, unsigned int l, const char *tag,
                  const char *fmt, ...);
 
 #endif  // SRC_QTRACE_LOGGING_H_

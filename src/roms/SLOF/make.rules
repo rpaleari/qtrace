@@ -16,7 +16,14 @@
 
 # CROSS is the prefix of your cross-compiler.
 # You can override this variable in your environment (export CROSS=...).
+ARCH := $(shell uname -p)
+
+# Auto-detect ppc64
+ifeq ($(ARCH), ppc64)
+CROSS          = ""
+else
 CROSS		?= powerpc64-linux-
+endif
 
 CELLSIZE	?= 64
 
@@ -62,7 +69,7 @@ RANLIB		?= $(CROSS)ranlib
 CPP		?= $(CROSS)cpp
 
 WARNFLAGS = -Wall -Wmissing-prototypes -Wstrict-prototypes
-CFLAGS ?= -g -O2 -fno-builtin -ffreestanding -nostdinc -msoft-float \
+CFLAGS ?= -g -O2 -fno-builtin -ffreestanding -nostdinc -msoft-float -fno-strict-aliasing \
 	  -mno-altivec -mabi=no-altivec -fno-stack-protector $(WARNFLAGS)
 
 export CC AS LD CLEAN OBJCOPY OBJDUMP STRIP AR RANLIB CFLAGS

@@ -22,7 +22,7 @@
 // associated with specific input (or "source") bytes.
 //
 class TaintLocation {
-public:
+ public:
   explicit TaintLocation() {}
 
   // Assign (move) two tainted locations
@@ -60,7 +60,7 @@ public:
     labels_.clear();
   }
 
-private:
+ private:
   std::set<int> labels_;
 };
 
@@ -72,7 +72,7 @@ private:
 typedef std::unordered_map<target_ulong,
                            std::shared_ptr<TaintLocation> > shadowmemory_t;
 class ShadowMemory {
-public:
+ public:
   explicit ShadowMemory() {}
 
   // Add a taint label to at the specified memory address
@@ -105,7 +105,7 @@ public:
     return mem_.at(addr).get();
   }
 
-private:
+ private:
   shadowmemory_t mem_;
 };
 
@@ -114,7 +114,7 @@ private:
 // The ShadowRegister class represents the tainted status of a CPU register.
 //
 class ShadowRegister {
-public:
+ public:
   // Initialize a tainted register, given its size (in bytes)
   explicit ShadowRegister(unsigned int size = sizeof(target_ulong))
     : size_(size) {
@@ -191,7 +191,7 @@ public:
     return name_;
   }
 
-private:
+ private:
   int size_;
   TaintLocation *reg_;
   std::string name_;

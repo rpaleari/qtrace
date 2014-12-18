@@ -15,6 +15,10 @@ import output.dot
 import output.html
 import trace.common
 import trace.reader
+try:
+    import trace.mac
+except ImportError:
+    logging.error("FIXME: missing module")
 
 import taint
 
@@ -28,8 +32,8 @@ def main():
                         help="execute (ALPHA, work in progress)")
     parser.add_argument("-f", "--dereference", action="store_true",
                         default=False,
-                        help="dump syscalls with dereferenced non-arg " \
-                        "addresses")
+                        help=("dump syscalls with dereferenced non-arg "
+                              "addresses"))
     parser.add_argument("-g", "--taintgraph", default=None,
                         help="create syscall dependencies graph file")
     parser.add_argument("-o", "--output", default=None,
@@ -47,6 +51,9 @@ def main():
                         help="log level",
                         choices=["CRITICAL", "DEBUG", "ERROR", "WARNING",
                                  "INFO"])
+    parser.add_argument("-F", "--filter", default=None,
+                        help=("Csv list of syscalls that must not be dumped."+
+                              " E.g., 0x01,0x02,0x03..."))
 
     parser.add_argument('filename', help="QTrace trace file")
     args = parser.parse_args()
@@ -58,16 +65,6 @@ def main():
     logging.basicConfig(format='[%(asctime)s] %(levelname)s : %(message)s',
                         level=numeric_loglevel)
 
-    if args.sysnames is not None:
-        if not os.path.isfile(args.sysnames):
-            logging.error("Invalid syscall names file '%s'", args.sysnames)
-            exit(1)
-        logging.info("Reading syscall names from '%s'", args.sysnames)
-        names = trace.common.read_syscall_names(args.sysnames)
-        logging.debug("Read %d syscall names", len(names))
-    else:
-        names = []
-
     logging.debug("Reading trace file '%s'", args.filename)
 
     # Get file size
@@ -77,18 +74,49 @@ def main():
     # Read syscalls and dump them to string
     syscalls = collections.OrderedDict()
     with open(args.filename, "rb") as tracefile:
-        reader = trace.reader.TraceReader(tracefile, filesize, names)
+        reader = trace.reader.TraceReader(tracefile, filesize)
+
         if args.dump:
             print reader.header
+
+        # Parse syscall names
+        if args.sysnames is not None:
+            if not os.path.isfile(args.sysnames):
+                logging.error("Invalid syscall names file '%s'", args.sysnames)
+                exit(1)
+
+            logging.info("Reading syscall names from '%s'", args.sysnames)
+
+            if not reader.is_osx():
+                names = trace.common.read_syscall_names(args.sysnames)
+            else:
+                # Special parsing of OSX syscall names (FIXME: unify)
+                names = trace.mac.read_syscall_names(args.sysnames)
+
+            logging.debug("Read %d syscall names", len(names))
+            reader.set_syscall_names(names)
+
+        if args.filter is not None:
+            blacklist = [int(x, base=16) for x in args.filter.split(",")]
+        else:
+            blacklist = []
 
         for syscall in reader:
             idz = syscall.obj.id
             assert idz not in syscalls, "Duplicated syscall ID #%d" % idz
-            syscalls[idz] = syscall
+
+            # Store syscalls only when *not* dumping them. When dumping, we
+            # quit as soon as this loop terminates, so we avoid wasting
+            # memory with the syscall list (which can be quite large)
+            if not args.dump:
+                syscalls[idz] = syscall
+
+            if syscall.obj.sysno in blacklist:
+                del syscall
+                continue
 
             # Dump system calls
-            if args.dump or \
-               (args.extrefs and len(syscall.extrefs) > 0):
+            if args.dump or (args.extrefs and len(syscall.extrefs) > 0):
                 print syscall.dump()
 
             # Dump dereferenced ring-3 addresses
@@ -96,12 +124,18 @@ def main():
                 extvals = set([x.value for x in syscall.extrefs])
                 extaddrs = set([x.addr for x in syscall.extrefs])
                 if len(extvals & extaddrs) > 0:
-                    print "Dereferenced ring-3 addresses: %s" % \
-                        ", ".join(hex(x) for x in extvals & extaddrs)
+                    print ("Dereferenced ring-3 addresses: %s" %
+                           ", ".join(hex(x) for x in extvals & extaddrs))
                     print syscall.dump()
                     print
 
+            del syscall
+
     logging.info("Read %d system calls", len(syscalls))
+
+    if args.dump:
+        logging.info("All done, terminating")
+        exit(0)
 
     # Check availability of taint-tracking information
     if (args.tainttrack or args.taintgraph) and not reader.header.hastaint:

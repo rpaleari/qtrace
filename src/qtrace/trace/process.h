@@ -5,6 +5,8 @@
 #ifndef SRC_QTRACE_TRACE_PROCESS_H_
 #define SRC_QTRACE_TRACE_PROCESS_H_
 
+#include <cstdint>
+
 #include <string>
 #include <memory>
 #include <utility>
@@ -17,8 +19,8 @@ class RunningProcess {
   target_ulong cr3_;
 
   // These fields are initialized lazily (i.e., upon first access)
-  target_ulong pid_;
-  target_ulong tid_;
+  uint32_t pid_;
+  uint32_t tid_;
   std::unique_ptr<std::string> name_;
 
   // Flag to implement lazy initialization of expensive process fields

@@ -17,8 +17,8 @@
 #include "qtrace/taint/notify_taint.h"
 
 void qtrace_taint_register(CPUArchState *env,
-                          bool istmp, unsigned char regno,
-                          int label) {
+			   bool istmp, unsigned char regno,
+			   int label) {
 #ifndef CONFIG_USER_ONLY
   if (!qtrace_taint_enabled) {
     return;
@@ -29,8 +29,8 @@ void qtrace_taint_register(CPUArchState *env,
 }
 
 void qtrace_taint_memory(CPUArchState *env,
-                        target_ulong addr, int size,
-                        int label) {
+			 target_ulong addr, int size,
+			 int label) {
 #ifndef CONFIG_USER_ONLY
   if (!qtrace_taint_enabled) {
     return;

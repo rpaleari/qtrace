@@ -18,21 +18,55 @@ INSTANCE VARIABLE obp-tftp-package
 
 /vd-len BUFFER: virtiodev
 virtiodev virtio-setup-vd
+0 VALUE virtio-net-priv
+0 VALUE open-count
 
 : open  ( -- okay? )
-   open IF
-      \ my-unit 1 rtas-set-tce-bypass
-      my-args s" obp-tftp" $open-package obp-tftp-package !
-      true
+   open-count 0= IF
+      open IF
+         \ my-unit 1 rtas-set-tce-bypass
+         s" local-mac-address" get-node get-property not IF
+            virtiodev virtio-net-open dup not IF ." virtio-net-open failed" EXIT THEN
+            drop TO virtio-net-priv
+         THEN
+         true
+      ELSE
+         false
+      THEN
    ELSE
-      false
+      true
+   THEN
+   my-args s" obp-tftp" $open-package obp-tftp-package !
+   open-count 1 + to open-count
+;
+
+
+: close  ( -- )
+    open-count 0> IF
+      open-count 1 - dup to open-count
+      0= IF
+         virtio-net-priv virtio-net-close
+         \ my-unit 0 rtas-set-tce-bypass
+         close
+      THEN
+   THEN
+   s" close" obp-tftp-package @ $call-method
+;
+
+: read ( buf len -- actual )
+   dup IF
+      virtio-net-read
+   ELSE
+      nip
    THEN
 ;
 
-: close  ( -- )
-   s" close" obp-tftp-package @ $call-method
-   \ my-unit 0 rtas-set-tce-bypass
-   close
+: write ( buf len -- actual )
+   dup IF
+      virtio-net-write
+   ELSE
+      nip
+   THEN
 ;
 
 : load  ( addr -- len )
@@ -55,10 +89,8 @@ virtiodev virtio-setup-vd
 setup-mac
 
 : setup-alias  ( -- )
-   s" net" find-alias 0= IF
-      s" net" get-node node>path set-alias
-   ELSE
-      drop
+   " net" get-next-alias ?dup IF
+      get-node node>path set-alias
    THEN
 ;
 setup-alias

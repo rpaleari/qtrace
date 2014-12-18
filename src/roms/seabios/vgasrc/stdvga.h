@@ -50,6 +50,7 @@ void stdvga_list_modes(u16 seg, u16 *dest, u16 *last);
 void stdvga_build_video_param(void);
 void stdvga_override_crtc(int mode, u8 *crtc);
 int stdvga_set_mode(struct vgamode_s *vmode_g, int flags);
+void stdvga_set_packed_palette(void);
 
 // stdvgaio.c
 u8 stdvga_pelmask_read(void);
@@ -90,7 +91,7 @@ void stdvga_planar4_plane(int plane);
 void stdvga_load_font(u16 seg, void *src_far, u16 count
                       , u16 start, u8 destflags, u8 fontsize);
 u16 stdvga_get_crtc(void);
-int stdvga_bpp_factor(struct vgamode_s *vmode_g);
+int stdvga_vram_ratio(struct vgamode_s *vmode_g);
 void stdvga_set_cursor_shape(u8 start, u8 end);
 void stdvga_set_cursor_pos(int address);
 void stdvga_set_scan_lines(u8 lines);
@@ -103,10 +104,8 @@ int stdvga_get_displaystart(struct vgamode_s *vmode_g);
 int stdvga_set_displaystart(struct vgamode_s *vmode_g, int val);
 int stdvga_get_dacformat(struct vgamode_s *vmode_g);
 int stdvga_set_dacformat(struct vgamode_s *vmode_g, int val);
-int stdvga_size_state(int states);
-int stdvga_save_state(u16 seg, void *data, int states);
-int stdvga_restore_state(u16 seg, void *data, int states);
+int stdvga_save_restore(int cmd, u16 seg, void *data);
 void stdvga_enable_video_addressing(u8 disable);
-int stdvga_init(void);
+int stdvga_setup(void);
 
 #endif // stdvga.h

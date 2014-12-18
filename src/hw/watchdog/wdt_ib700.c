@@ -42,6 +42,8 @@ typedef struct IB700state {
     ISADevice parent_obj;
 
     QEMUTimer *timer;
+
+    PortioList port_list;
 } IB700State;
 
 /* This is the timer.  We use a global here because the watchdog
@@ -62,7 +64,7 @@ static void ib700_write_enable_reg(void *vp, uint32_t addr, uint32_t data)
     ib700_debug("addr = %x, data = %x\n", addr, data);
 
     timeout = (int64_t) time_map[data & 0xF] * get_ticks_per_sec();
-    qemu_mod_timer(s->timer, qemu_get_clock_ns (vm_clock) + timeout);
+    timer_mod(s->timer, qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + timeout);
 }
 
 /* A write (of any value) to this register disables the timer. */
@@ -72,7 +74,7 @@ static void ib700_write_disable_reg(void *vp, uint32_t addr, uint32_t data)
 
     ib700_debug("addr = %x, data = %x\n", addr, data);
 
-    qemu_del_timer(s->timer);
+    timer_del(s->timer);
 }
 
 /* This is called when the watchdog expires. */
@@ -83,15 +85,14 @@ static void ib700_timer_expired(void *vp)
     ib700_debug("watchdog expired\n");
 
     watchdog_perform_action();
-    qemu_del_timer(s->timer);
+    timer_del(s->timer);
 }
 
 static const VMStateDescription vmstate_ib700 = {
     .name = "ib700_wdt",
     .version_id = 0,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_TIMER(timer, IB700State),
         VMSTATE_END_OF_LIST()
     }
@@ -106,14 +107,13 @@ static const MemoryRegionPortio wdt_portio_list[] = {
 static void wdt_ib700_realize(DeviceState *dev, Error **errp)
 {
     IB700State *s = IB700(dev);
-    PortioList *port_list = g_new(PortioList, 1);
 
     ib700_debug("watchdog init\n");
 
-    s->timer = qemu_new_timer_ns(vm_clock, ib700_timer_expired, s);
+    s->timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, ib700_timer_expired, s);
 
-    portio_list_init(port_list, OBJECT(s), wdt_portio_list, s, "ib700");
-    portio_list_add(port_list, isa_address_space_io(&s->parent_obj), 0);
+    portio_list_init(&s->port_list, OBJECT(s), wdt_portio_list, s, "ib700");
+    portio_list_add(&s->port_list, isa_address_space_io(&s->parent_obj), 0);
 }
 
 static void wdt_ib700_reset(DeviceState *dev)
@@ -122,7 +122,7 @@ static void wdt_ib700_reset(DeviceState *dev)
 
     ib700_debug("watchdog reset\n");
 
-    qemu_del_timer(s->timer);
+    timer_del(s->timer);
 }
 
 static WatchdogTimerModel model = {

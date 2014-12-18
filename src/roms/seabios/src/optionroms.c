@@ -6,14 +6,19 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "bregs.h" // struct bregs
-#include "farptr.h" // FLATPTR_TO_SEG
 #include "config.h" // CONFIG_*
-#include "util.h" // dprintf
-#include "pci.h" // foreachpci
-#include "pci_regs.h" // PCI_ROM_ADDRESS
-#include "pci_ids.h" // PCI_CLASS_DISPLAY_VGA
-#include "boot.h" // IPL
-#include "optionroms.h" // struct rom_header
+#include "farptr.h" // FLATPTR_TO_SEG
+#include "hw/pci.h" // foreachpci
+#include "hw/pci_ids.h" // PCI_CLASS_DISPLAY_VGA
+#include "hw/pci_regs.h" // PCI_ROM_ADDRESS
+#include "malloc.h" // rom_confirm
+#include "output.h" // dprintf
+#include "romfile.h" // romfile_loadint
+#include "stacks.h" // farcall16big
+#include "std/optionrom.h" // struct rom_header
+#include "std/pnpbios.h" // PNP_SIGNATURE
+#include "string.h" // memset
+#include "util.h" // get_pnp_offset
 
 
 /****************************************************************
@@ -39,12 +44,10 @@ __callrom(struct rom_header *rom, u16 offset, u16 bdf)
     start_preempt();
     farcall16big(&br);
     finish_preempt();
-
-    debug_serial_setup();
 }
 
 // Execute a given option rom at the standard entry vector.
-static void
+void
 callrom(struct rom_header *rom, u16 bdf)
 {
     __callrom(rom, OPTION_ROM_INITVECTOR, bdf);
@@ -109,6 +112,9 @@ get_pci_rom(struct rom_header *rom)
     struct pci_data *pd = (void*)((u32)rom + rom->pcioffset);
     if (pd->signature != PCI_ROM_SIGNATURE)
         return NULL;
+    if (rom->pcioffset & 3)
+        dprintf(1, "WARNING! Found unaligned PCI rom (vd=%04x:%04x)\n"
+                , pd->vendor, pd->device);
     return pd;
 }
 
@@ -210,7 +216,7 @@ run_file_roms(const char *prefix, int isvga, u64 *sources)
  ****************************************************************/
 
 // Verify device is a vga device with legacy address decoding enabled.
-static int
+int
 is_pci_vga(struct pci_device *pci)
 {
     if (pci->class != PCI_CLASS_DISPLAY_VGA)
@@ -351,7 +357,7 @@ optionrom_setup(void)
     if (CONFIG_OPTIONROMS_DEPLOYED) {
         // Option roms are already deployed on the system.
         u32 pos = post_vga;
-        while (pos < rom_get_top()) {
+        while (pos < rom_get_max()) {
             int ret = init_optionrom((void*)pos, 0, 0);
             if (ret)
                 pos += OPTION_ROM_ALIGN;
@@ -410,13 +416,13 @@ optionrom_setup(void)
  * VGA init
  ****************************************************************/
 
-static int S3ResumeVgaInit;
+static int S3ResumeVga;
 int ScreenAndDebug;
 struct rom_header *VgaROM;
 
 // Call into vga code to turn on console.
 void
-vga_setup(void)
+vgarom_setup(void)
 {
     if (! CONFIG_OPTIONROMS)
         return;
@@ -425,7 +431,7 @@ vga_setup(void)
 
     // Load some config settings that impact VGA.
     EnforceChecksum = romfile_loadint("etc/optionroms-checksum", 1);
-    S3ResumeVgaInit = romfile_loadint("etc/s3-resume-vga-init", !CONFIG_COREBOOT);
+    S3ResumeVga = romfile_loadint("etc/s3-resume-vga-init", CONFIG_QEMU);
     ScreenAndDebug = romfile_loadint("etc/screen-and-debug", 1);
 
     if (CONFIG_OPTIONROMS_DEPLOYED) {
@@ -433,7 +439,7 @@ vga_setup(void)
         init_optionrom((void*)BUILD_ROM_START, 0, 1);
     } else {
         // Clear option rom memory
-        memset((void*)BUILD_ROM_START, 0, rom_get_top() - BUILD_ROM_START);
+        memset((void*)BUILD_ROM_START, 0, rom_get_max() - BUILD_ROM_START);
 
         // Find and deploy PCI VGA rom.
         struct pci_device *pci;
@@ -459,9 +465,9 @@ vga_setup(void)
 }
 
 void
-s3_resume_vga_init(void)
+s3_resume_vga(void)
 {
-    if (!S3ResumeVgaInit)
+    if (!S3ResumeVga)
         return;
     if (!VgaROM || ! is_valid_rom(VgaROM))
         return;

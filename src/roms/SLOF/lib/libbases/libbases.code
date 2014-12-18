@@ -10,6 +10,7 @@
  *     IBM Corporation - initial implementation
  *****************************************************************************/
 #include <southbridge.h>
+#include <nvram.h>
 
 // : get-nvram-base ( -- base )
 PRIM(get_X2d_nvram_X2d_base)

@@ -13,11 +13,21 @@
 cod(virtio-vring-size)
 cod(virtio-get-qsize)
 cod(virtio-get-config)
+cod(virtio-set-qaddr)
 
 cod(virtio-blk-init)
 cod(virtio-blk-shutdown)
 cod(virtio-blk-read)
 
+cod(virtio-scsi-init)
+cod(virtio-scsi-shutdown)
+cod(virtio-scsi-send)
+
 cod(virtio-fs-init)
 cod(virtio-fs-shutdown)
 cod(virtio-fs-load)
+
+cod(virtio-net-open)
+cod(virtio-net-close)
+cod(virtio-net-read)
+cod(virtio-net-write)

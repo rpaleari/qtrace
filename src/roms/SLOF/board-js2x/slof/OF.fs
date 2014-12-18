@@ -444,7 +444,7 @@ enable-framebuffer-output
 8b0 cp
 
 \ do not let the usb scan overwrite the atapi cdrom alias
-pci-cdrom-num TO cdrom-alias-num
+\ pci-cdrom-num TO cdrom-alias-num
 usb-scan
 
 : create-aliases  ( -- )

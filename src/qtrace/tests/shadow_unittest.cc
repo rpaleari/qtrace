@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "../shadow.h"
+#include "taint/shadow.h"
 
 TEST(TaintLocationTest, AddLabel) {
   TaintLocation loc;

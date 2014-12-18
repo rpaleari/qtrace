@@ -1,5 +1,3 @@
-#include "exec/def-helper.h"
-
 DEF_HELPER_FLAGS_4(cc_compute_all, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
 DEF_HELPER_FLAGS_4(cc_compute_c, TCG_CALL_NO_RWG_SE, tl, tl, tl, tl, int)
 
@@ -58,6 +56,7 @@ DEF_HELPER_2(sysret, void, env, int)
 DEF_HELPER_2(hlt, void, env, int)
 DEF_HELPER_2(monitor, void, env, tl)
 DEF_HELPER_2(mwait, void, env, int)
+DEF_HELPER_2(pause, void, env, int)
 DEF_HELPER_1(debug, void, env)
 DEF_HELPER_1(reset_rf, void, env)
 DEF_HELPER_3(raise_interrupt, void, env, int, int)
@@ -219,4 +218,18 @@ DEF_HELPER_3(rclq, tl, env, tl, tl)
 DEF_HELPER_3(rcrq, tl, env, tl, tl)
 #endif
 
-#include "exec/def-helper.h"
+#ifdef CONFIG_QTRACE_TAINT
+DEF_HELPER_0(qtrace_endtb, void)
+
+DEF_HELPER_1(qtrace_clearR, void, tl)
+
+DEF_HELPER_2(qtrace_assert, void, tl, tl)
+DEF_HELPER_2(qtrace_combine2, void, tl, tl)
+DEF_HELPER_2(qtrace_mov, void, tl, tl)
+
+DEF_HELPER_3(qtrace_mem2reg, void, tl, tl, int)
+DEF_HELPER_3(qtrace_reg2mem, void, tl, tl, int)
+DEF_HELPER_3(qtrace_combine3, void, tl, tl, tl)
+
+DEF_HELPER_5(qtrace_deposit, void, tl, tl, tl, i32, i32)
+#endif

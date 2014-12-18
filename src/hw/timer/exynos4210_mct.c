@@ -54,6 +54,7 @@
 
 #include "hw/sysbus.h"
 #include "qemu/timer.h"
+#include "qemu/main-loop.h"
 #include "qemu-common.h"
 #include "hw/ptimer.h"
 
@@ -263,7 +264,6 @@ static const VMStateDescription vmstate_tick_timer = {
     .name = "exynos4210.mct.tick_timer",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(cnt_run, struct tick_timer),
         VMSTATE_UINT32(int_run, struct tick_timer),
@@ -283,7 +283,6 @@ static const VMStateDescription vmstate_lregs = {
     .name = "exynos4210.mct.lregs",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32_ARRAY(cnt, struct lregs, L_REG_CNT_AMOUNT),
         VMSTATE_UINT32(tcon, struct lregs),
@@ -298,7 +297,6 @@ static const VMStateDescription vmstate_exynos4210_mct_lt = {
     .name = "exynos4210.mct.lt",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_INT32(id, Exynos4210MCTLT),
         VMSTATE_STRUCT(tick_timer, Exynos4210MCTLT, 0,
@@ -316,7 +314,6 @@ static const VMStateDescription vmstate_gregs = {
     .name = "exynos4210.mct.lregs",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_UINT64(cnt, struct gregs),
         VMSTATE_UINT32(cnt_wstat, struct gregs),
@@ -335,7 +332,6 @@ static const VMStateDescription vmstate_exynos4210_mct_gt = {
     .name = "exynos4210.mct.lt",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_STRUCT(reg, Exynos4210MCTGT, 0, vmstate_gregs,
                 struct gregs),
@@ -350,7 +346,6 @@ static const VMStateDescription vmstate_exynos4210_mct_state = {
     .name = "exynos4210.mct",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(reg_mct_cfg, Exynos4210MCTState),
         VMSTATE_STRUCT_ARRAY(l_timer, Exynos4210MCTState, 2, 0,
@@ -823,14 +818,14 @@ static void exynos4210_ltick_recalc_count(struct tick_timer *s)
          */
 
         if (s->last_tcnto) {
-            to_count = s->last_tcnto * s->last_icnto;
+            to_count = (uint64_t)s->last_tcnto * s->last_icnto;
         } else {
             to_count = s->last_icnto;
         }
     } else {
         /* distance is passed, recalculate with tcnto * icnto */
         if (s->icntb) {
-            s->distance = s->tcntb * s->icntb;
+            s->distance = (uint64_t)s->tcntb * s->icntb;
         } else {
             s->distance = s->tcntb;
         }
@@ -905,7 +900,7 @@ static void exynos4210_ltick_event(void *opaque)
         /* raise interrupt if enabled */
         if (s->reg.int_enb & L_INT_INTENB_ICNTEIE) {
 #ifdef DEBUG_MCT
-            time2[s->id] = qemu_get_clock_ns(vm_clock);
+            time2[s->id] = qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL);
             DPRINTF("local timer[%d] IRQ: %llx\n", s->id,
                     time2[s->id] - time1[s->id]);
             time1[s->id] = time2[s->id];

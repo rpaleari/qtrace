@@ -54,7 +54,7 @@ static const VMStateDescription vmstate_smc91c111 = {
     .name = "smc91c111",
     .version_id = 1,
     .minimum_version_id = 1,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT16(tcr, smc91c111_state),
         VMSTATE_UINT16(rcr, smc91c111_state),
         VMSTATE_UINT16(cr, smc91c111_state),
@@ -185,6 +185,7 @@ static void smc91c111_release_packet(smc91c111_state *s, int packet)
     s->allocated &= ~(1 << packet);
     if (s->tx_alloc == 0x80)
         smc91c111_tx_alloc(s);
+    qemu_flush_queued_packets(qemu_get_queue(s->nic));
 }
 
 /* Flush the TX FIFO.  */

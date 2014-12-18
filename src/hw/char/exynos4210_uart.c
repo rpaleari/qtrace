@@ -192,10 +192,9 @@ typedef struct Exynos4210UartState {
 static const char *exynos4210_uart_regname(hwaddr  offset)
 {
 
-    int regs_number = sizeof(exynos4210_uart_regs) / sizeof(Exynos4210UartReg);
     int i;
 
-    for (i = 0; i < regs_number; i++) {
+    for (i = 0; i < ARRAY_SIZE(exynos4210_uart_regs); i++) {
         if (offset == exynos4210_uart_regs[i].offset) {
             return exynos4210_uart_regs[i].name;
         }
@@ -544,10 +543,9 @@ static void exynos4210_uart_event(void *opaque, int event)
 static void exynos4210_uart_reset(DeviceState *dev)
 {
     Exynos4210UartState *s = EXYNOS4210_UART(dev);
-    int regs_number = sizeof(exynos4210_uart_regs)/sizeof(Exynos4210UartReg);
     int i;
 
-    for (i = 0; i < regs_number; i++) {
+    for (i = 0; i < ARRAY_SIZE(exynos4210_uart_regs); i++) {
         s->reg[I_(exynos4210_uart_regs[i].offset)] =
                 exynos4210_uart_regs[i].reset_value;
     }
@@ -562,7 +560,6 @@ static const VMStateDescription vmstate_exynos4210_uart_fifo = {
     .name = "exynos4210.uart.fifo",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_UINT32(sp, Exynos4210UartFIFO),
         VMSTATE_UINT32(rp, Exynos4210UartFIFO),
@@ -575,7 +572,6 @@ static const VMStateDescription vmstate_exynos4210_uart = {
     .name = "exynos4210.uart",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_STRUCT(rx, Exynos4210UartState, 1,
                        vmstate_exynos4210_uart_fifo, Exynos4210UartFIFO),

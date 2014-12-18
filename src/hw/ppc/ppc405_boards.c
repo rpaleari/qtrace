@@ -27,9 +27,11 @@
 #include "hw/timer/m48t59.h"
 #include "hw/block/flash.h"
 #include "sysemu/sysemu.h"
+#include "sysemu/qtest.h"
 #include "block/block.h"
 #include "hw/boards.h"
 #include "qemu/log.h"
+#include "qemu/error-report.h"
 #include "hw/loader.h"
 #include "sysemu/blockdev.h"
 #include "exec/address-spaces.h"
@@ -42,7 +44,7 @@
 
 #define USE_FLASH_BIOS
 
-#define DEBUG_BOARD_INIT
+//#define DEBUG_BOARD_INIT
 
 /*****************************************************************************/
 /* PPC405EP reference board (IBM) */
@@ -170,12 +172,12 @@ static void ref405ep_fpga_init(MemoryRegion *sysmem, uint32_t base)
     qemu_register_reset(&ref405ep_fpga_reset, fpga);
 }
 
-static void ref405ep_init(QEMUMachineInitArgs *args)
+static void ref405ep_init(MachineState *machine)
 {
-    ram_addr_t ram_size = args->ram_size;
-    const char *kernel_filename = args->kernel_filename;
-    const char *kernel_cmdline = args->kernel_cmdline;
-    const char *initrd_filename = args->initrd_filename;
+    ram_addr_t ram_size = machine->ram_size;
+    const char *kernel_filename = machine->kernel_filename;
+    const char *kernel_cmdline = machine->kernel_cmdline;
+    const char *initrd_filename = machine->initrd_filename;
     char *filename;
     ppc4xx_bd_info_t bd;
     CPUPPCState *env;
@@ -197,8 +199,8 @@ static void ref405ep_init(QEMUMachineInitArgs *args)
     MemoryRegion *sysmem = get_system_memory();
 
     /* XXX: fix this */
-    memory_region_init_ram(&ram_memories[0], NULL, "ef405ep.ram", 0x08000000);
-    vmstate_register_ram_global(&ram_memories[0]);
+    memory_region_allocate_system_memory(&ram_memories[0], NULL, "ef405ep.ram",
+                                         0x08000000);
     ram_bases[0] = 0;
     ram_sizes[0] = 0x08000000;
     memory_region_init(&ram_memories[1], NULL, "ef405ep.ram1", 0);
@@ -246,23 +248,27 @@ static void ref405ep_init(QEMUMachineInitArgs *args)
         bios = g_new(MemoryRegion, 1);
         memory_region_init_ram(bios, NULL, "ef405ep.bios", BIOS_SIZE);
         vmstate_register_ram_global(bios);
+
         if (bios_name == NULL)
             bios_name = BIOS_FILENAME;
         filename = qemu_find_file(QEMU_FILE_TYPE_BIOS, bios_name);
         if (filename) {
             bios_size = load_image(filename, memory_region_get_ram_ptr(bios));
             g_free(filename);
+            if (bios_size < 0 || bios_size > BIOS_SIZE) {
+                error_report("Could not load PowerPC BIOS '%s'", bios_name);
+                exit(1);
+            }
+            bios_size = (bios_size + 0xfff) & ~0xfff;
+            memory_region_add_subregion(sysmem, (uint32_t)(-bios_size), bios);
+        } else if (!qtest_enabled() || kernel_filename != NULL) {
+            error_report("Could not load PowerPC BIOS '%s'", bios_name);
+            exit(1);
         } else {
+            /* Avoid an uninitialized variable warning */
             bios_size = -1;
         }
-        if (bios_size < 0 || bios_size > BIOS_SIZE) {
-            fprintf(stderr, "qemu: could not load PowerPC bios '%s'\n",
-                    bios_name);
-            exit(1);
-        }
-        bios_size = (bios_size + 0xfff) & ~0xfff;
         memory_region_set_readonly(bios, true);
-        memory_region_add_subregion(sysmem, (uint32_t)(-bios_size), bios);
     }
     /* Register FPGA */
 #ifdef DEBUG_BOARD_INIT
@@ -353,16 +359,15 @@ static void ref405ep_init(QEMUMachineInitArgs *args)
         bdloc = 0;
     }
 #ifdef DEBUG_BOARD_INIT
+    printf("bdloc " RAM_ADDR_FMT "\n", bdloc);
     printf("%s: Done\n", __func__);
 #endif
-    printf("bdloc " RAM_ADDR_FMT "\n", bdloc);
 }
 
 static QEMUMachine ref405ep_machine = {
     .name = "ref405ep",
     .desc = "ref405ep",
     .init = ref405ep_init,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 /*****************************************************************************/
@@ -495,16 +500,17 @@ static void taihu_cpld_init(MemoryRegion *sysmem, uint32_t base)
     qemu_register_reset(&taihu_cpld_reset, cpld);
 }
 
-static void taihu_405ep_init(QEMUMachineInitArgs *args)
+static void taihu_405ep_init(MachineState *machine)
 {
-    ram_addr_t ram_size = args->ram_size;
-    const char *kernel_filename = args->kernel_filename;
-    const char *initrd_filename = args->initrd_filename;
+    ram_addr_t ram_size = machine->ram_size;
+    const char *kernel_filename = machine->kernel_filename;
+    const char *initrd_filename = machine->initrd_filename;
     char *filename;
     qemu_irq *pic;
     MemoryRegion *sysmem = get_system_memory();
     MemoryRegion *bios;
     MemoryRegion *ram_memories = g_malloc(2 * sizeof(*ram_memories));
+    MemoryRegion *ram = g_malloc0(sizeof(*ram));
     hwaddr ram_bases[2], ram_sizes[2];
     long bios_size;
     target_ulong kernel_base, initrd_base;
@@ -514,17 +520,20 @@ static void taihu_405ep_init(QEMUMachineInitArgs *args)
     DriveInfo *dinfo;
 
     /* RAM is soldered to the board so the size cannot be changed */
-    memory_region_init_ram(&ram_memories[0], NULL,
-                           "taihu_405ep.ram-0", 0x04000000);
-    vmstate_register_ram_global(&ram_memories[0]);
+    ram_size = 0x08000000;
+    memory_region_allocate_system_memory(ram, NULL, "taihu_405ep.ram",
+                                         ram_size);
+
     ram_bases[0] = 0;
     ram_sizes[0] = 0x04000000;
-    memory_region_init_ram(&ram_memories[1], NULL,
-                           "taihu_405ep.ram-1", 0x04000000);
-    vmstate_register_ram_global(&ram_memories[1]);
+    memory_region_init_alias(&ram_memories[0], NULL,
+                             "taihu_405ep.ram-0", ram, ram_bases[0],
+                             ram_sizes[0]);
     ram_bases[1] = 0x04000000;
     ram_sizes[1] = 0x04000000;
-    ram_size = 0x08000000;
+    memory_region_init_alias(&ram_memories[1], NULL,
+                             "taihu_405ep.ram-1", ram, ram_bases[1],
+                             ram_sizes[1]);
 #ifdef DEBUG_BOARD_INIT
     printf("%s: register cpu\n", __func__);
 #endif
@@ -569,17 +578,17 @@ static void taihu_405ep_init(QEMUMachineInitArgs *args)
         if (filename) {
             bios_size = load_image(filename, memory_region_get_ram_ptr(bios));
             g_free(filename);
-        } else {
-            bios_size = -1;
-        }
-        if (bios_size < 0 || bios_size > BIOS_SIZE) {
-            fprintf(stderr, "qemu: could not load PowerPC bios '%s'\n",
-                    bios_name);
+            if (bios_size < 0 || bios_size > BIOS_SIZE) {
+                error_report("Could not load PowerPC BIOS '%s'", bios_name);
+                exit(1);
+            }
+            bios_size = (bios_size + 0xfff) & ~0xfff;
+            memory_region_add_subregion(sysmem, (uint32_t)(-bios_size), bios);
+        } else if (!qtest_enabled()) {
+            error_report("Could not load PowerPC BIOS '%s'", bios_name);
             exit(1);
         }
-        bios_size = (bios_size + 0xfff) & ~0xfff;
         memory_region_set_readonly(bios, true);
-        memory_region_add_subregion(sysmem, (uint32_t)(-bios_size), bios);
     }
     /* Register Linux flash */
     dinfo = drive_get(IF_PFLASH, 0, fl_idx);
@@ -650,7 +659,6 @@ static QEMUMachine taihu_machine = {
     .name = "taihu",
     .desc = "taihu",
     .init = taihu_405ep_init,
-    DEFAULT_MACHINE_OPTIONS,
 };
 
 static void ppc405_machine_init(void)

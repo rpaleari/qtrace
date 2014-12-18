@@ -55,6 +55,17 @@ variable callback-function
   ." <" dup cstrlen dup 20 < if type else 2drop ." BAD" then ." >"
 ;
 
+: phandle-exists?  ( phandle -- found? )
+  false swap 0
+  begin iterate-tree ?dup while
+    ( found? find-ph current-ph )
+    over over = if
+      rot drop true -rot
+    then
+  repeat
+  drop
+;
+
 \ -------------------------------------------------------------
 \ public interface
 \ -------------------------------------------------------------
@@ -108,12 +119,13 @@ external
   dup 0= if 0 else dup cstrlen then
 
   ( buf prev prev_len )
-  0 3 pick c!
   
   \ verify that prev exists (overkill...)
   dup if
     2dup r@ get-package-property if
-      r> 2drop 2drop -1 exit
+      r> 2drop drop
+      0 swap c!
+      -1 exit
     else
       2drop
     then
@@ -126,7 +138,8 @@ external
     dup 1+ -rot ci-strcpy drop 1
   else
     ( buf )
-    drop 0
+    0 swap c!
+    0
   then
 ;
 
@@ -294,8 +307,9 @@ external
 \ 6.3.2.7 Time
 \ -------------------------------------------------------------
 
-\ : milliseconds ( -- ms ) ;
-
+: milliseconds ( -- ms )
+  get-msecs
+;
 
 \ -------------------------------------------------------------
 \ arch?
@@ -315,17 +329,16 @@ external
   outer-interpreter
 ;
 
-[IFDEF] CONFIG_PPC
-\ PowerPC Microprocessor CHRP binding
-\ 10.5.2. Client Interface
-
-( cstring-method phandle -- missing )
-
-: test-method
-	swap dup cstrlen rot
-	find-method 0= if -1 else drop 0 then
+: test-method    ( cstring-method phandle -- missing? )
+  swap dup cstrlen rot
+  
+  \ Check for incorrect phandle
+  dup phandle-exists? false = if
+    -1 throw
+  then
+  
+  find-method 0= if -1 else drop 0 then
 ;
-[THEN]
 
 finish-device
 device-end

@@ -90,6 +90,7 @@ static const struct QemuSeccompSyscall seccomp_whitelist[] = {
     { SCMP_SYS(getuid), 245 },
     { SCMP_SYS(geteuid), 245 },
     { SCMP_SYS(timer_create), 245 },
+    { SCMP_SYS(times), 245 },
     { SCMP_SYS(exit), 245 },
     { SCMP_SYS(clock_gettime), 245 },
     { SCMP_SYS(time), 245 },
@@ -113,6 +114,7 @@ static const struct QemuSeccompSyscall seccomp_whitelist[] = {
     { SCMP_SYS(write), 244 },
     { SCMP_SYS(fcntl), 243 },
     { SCMP_SYS(tgkill), 242 },
+    { SCMP_SYS(kill), 242 },
     { SCMP_SYS(rt_sigaction), 242 },
     { SCMP_SYS(pipe2), 242 },
     { SCMP_SYS(munmap), 242 },
@@ -141,6 +143,7 @@ static const struct QemuSeccompSyscall seccomp_whitelist[] = {
     { SCMP_SYS(getsockname), 242 },
     { SCMP_SYS(getpeername), 242 },
     { SCMP_SYS(accept4), 242 },
+    { SCMP_SYS(timerfd_settime), 242 },
     { SCMP_SYS(newfstatat), 241 },
     { SCMP_SYS(shutdown), 241 },
     { SCMP_SYS(getsockopt), 241 },
@@ -218,7 +221,16 @@ static const struct QemuSeccompSyscall seccomp_whitelist[] = {
     { SCMP_SYS(io_cancel), 241 },
     { SCMP_SYS(io_setup), 241 },
     { SCMP_SYS(io_destroy), 241 },
-    { SCMP_SYS(arch_prctl), 240 }
+    { SCMP_SYS(arch_prctl), 240 },
+    { SCMP_SYS(mkdir), 240 },
+    { SCMP_SYS(fchmod), 240 },
+    { SCMP_SYS(shmget), 240 },
+    { SCMP_SYS(shmat), 240 },
+    { SCMP_SYS(shmdt), 240 },
+    { SCMP_SYS(timerfd_create), 240 },
+    { SCMP_SYS(shmctl), 240 },
+    { SCMP_SYS(mlock), 240 },
+    { SCMP_SYS(munlock), 240 }
 };
 
 int seccomp_start(void)
@@ -229,6 +241,7 @@ int seccomp_start(void)
 
     ctx = seccomp_init(SCMP_ACT_KILL);
     if (ctx == NULL) {
+        rc = -1;
         goto seccomp_return;
     }
 

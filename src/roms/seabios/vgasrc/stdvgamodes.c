@@ -5,10 +5,11 @@
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
-#include "vgabios.h" // struct VideoParamTableEntry_s
 #include "biosvar.h" // GET_GLOBAL
-#include "util.h" // memcpy_far
+#include "output.h" // warn_internalerror
 #include "stdvga.h" // stdvga_find_mode
+#include "string.h" // memcpy_far
+#include "vgabios.h" // struct VideoParamTableEntry_s
 
 
 /****************************************************************
@@ -335,7 +336,7 @@ void
 stdvga_list_modes(u16 seg, u16 *dest, u16 *last)
 {
     int i;
-    for (i = 0; i < ARRAY_SIZE(vga_modes); i++) {
+    for (i = 0; i < ARRAY_SIZE(vga_modes) && dest < last; i++) {
         struct stdvga_mode_s *stdmode_g = &vga_modes[i];
         u16 mode = GET_GLOBAL(stdmode_g->mode);
         if (mode == 0xffff)
@@ -503,4 +504,11 @@ stdvga_set_mode(struct vgamode_s *vmode_g, int flags)
         stdvga_load_font(get_global_seg(), vgafont16, 0x100, 0, 0, 16);
 
     return 0;
+}
+
+// Load the standard palette associated with 8bpp packed pixel vga modes.
+void
+stdvga_set_packed_palette(void)
+{
+    stdvga_dac_write(get_global_seg(), palette3, 0, sizeof(palette3) / 3);
 }

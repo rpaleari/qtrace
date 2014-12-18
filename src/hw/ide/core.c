@@ -499,6 +499,18 @@ static void ide_rw_error(IDEState *s) {
     ide_set_irq(s->bus);
 }
 
+static bool ide_sect_range_ok(IDEState *s,
+                              uint64_t sector, uint64_t nb_sectors)
+{
+    uint64_t total_sectors;
+
+    bdrv_get_geometry(s->bs, &total_sectors);
+    if (sector > total_sectors || nb_sectors > total_sectors - sector) {
+        return false;
+    }
+    return true;
+}
+
 static void ide_sector_read_cb(void *opaque, int ret)
 {
     IDEState *s = opaque;
@@ -554,6 +566,11 @@ void ide_sector_read(IDEState *s)
     printf("sector=%" PRId64 "\n", sector_num);
 #endif
 
+    if (!ide_sect_range_ok(s, sector_num, n)) {
+        ide_rw_error(s);
+        return;
+    }
+
     s->iov.iov_base = s->io_buffer;
     s->iov.iov_len  = n * BDRV_SECTOR_SIZE;
     qemu_iovec_init_external(&s->qiov, &s->iov, 1);
@@ -596,10 +613,10 @@ static int ide_handle_rw_error(IDEState *s, int error, int op)
     bool is_read = (op & BM_STATUS_RETRY_READ) != 0;
     BlockErrorAction action = bdrv_get_error_action(s->bs, is_read, error);
 
-    if (action == BDRV_ACTION_STOP) {
+    if (action == BLOCK_ERROR_ACTION_STOP) {
         s->bus->dma->ops->set_unit(s->bus->dma, s->unit);
         s->bus->error_status = op;
-    } else if (action == BDRV_ACTION_REPORT) {
+    } else if (action == BLOCK_ERROR_ACTION_REPORT) {
         if (op & BM_STATUS_DMA_RETRY) {
             dma_buf_commit(s);
             ide_dma_error(s);
@@ -608,7 +625,7 @@ static int ide_handle_rw_error(IDEState *s, int error, int op)
         }
     }
     bdrv_error_action(s->bs, action, is_read, error);
-    return action != BDRV_ACTION_IGNORE;
+    return action != BLOCK_ERROR_ACTION_IGNORE;
 }
 
 void ide_dma_cb(void *opaque, int ret)
@@ -670,6 +687,12 @@ void ide_dma_cb(void *opaque, int ret)
     printf("ide_dma_cb: sector_num=%" PRId64 " n=%d, cmd_cmd=%d\n",
            sector_num, n, s->dma_cmd);
 #endif
+
+    if (!ide_sect_range_ok(s, sector_num, n)) {
+        dma_buf_commit(s);
+        ide_dma_error(s);
+        return;
+    }
 
     switch (s->dma_cmd) {
     case IDE_DMA_READ:
@@ -768,8 +791,8 @@ static void ide_sector_write_cb(void *opaque, int ret)
            that at the expense of slower write performances. Use this
            option _only_ to install Windows 2000. You must disable it
            for normal use. */
-        qemu_mod_timer(s->sector_write_timer,
-                       qemu_get_clock_ns(vm_clock) + (get_ticks_per_sec() / 1000));
+        timer_mod(s->sector_write_timer,
+                       qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + (get_ticks_per_sec() / 1000));
     } else {
         ide_set_irq(s->bus);
     }
@@ -788,6 +811,11 @@ void ide_sector_write(IDEState *s)
     n = s->nsector;
     if (n > s->req_nb_sectors) {
         n = s->req_nb_sectors;
+    }
+
+    if (!ide_sect_range_ok(s, sector_num, n)) {
+        ide_rw_error(s);
+        return;
     }
 
     s->iov.iov_base = s->io_buffer;
@@ -1321,6 +1349,7 @@ static bool cmd_exec_dev_diagnostic(IDEState *s, uint8_t cmd)
         s->status = 0; /* ATAPI spec (v6) section 9.10 defines packet
                         * devices to return a clear status register
                         * with READY_STAT *not* set. */
+        s->error = 0x01;
     } else {
         s->status = READY_STAT | SEEK_STAT;
         /* The bits of the error register are not as usual for this command!
@@ -1601,7 +1630,7 @@ static bool cmd_smart(IDEState *s, uint8_t cmd)
         case 2: /* extended self test */
             s->smart_selftest_count++;
             if (s->smart_selftest_count > 21) {
-                s->smart_selftest_count = 0;
+                s->smart_selftest_count = 1;
             }
             n = 2 + (s->smart_selftest_count - 1) * 24;
             s->smart_selftest_data[n] = s->sector;
@@ -2103,7 +2132,7 @@ int ide_init_drive(IDEState *s, BlockDriverState *bs, IDEDriveKind kind,
     s->smart_selftest_count = 0;
     if (kind == IDE_CD) {
         bdrv_set_dev_ops(bs, &ide_cd_block_ops, s);
-        bdrv_set_buffer_alignment(bs, 2048);
+        bdrv_set_guest_block_size(bs, 2048);
     } else {
         if (!bdrv_is_inserted(s->bs)) {
             error_report("Device needs media, but drive is empty");
@@ -2163,7 +2192,7 @@ static void ide_init1(IDEBus *bus, int unit)
     s->smart_selftest_data = qemu_blockalign(s->bs, 512);
     memset(s->smart_selftest_data, 0, 512);
 
-    s->sector_write_timer = qemu_new_timer_ns(vm_clock,
+    s->sector_write_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL,
                                            ide_sector_write_timer_cb, s);
 }
 
@@ -2210,55 +2239,6 @@ void ide_init2(IDEBus *bus, qemu_irq irq)
     for(i = 0; i < 2; i++) {
         ide_init1(bus, i);
         ide_reset(&bus->ifs[i]);
-    }
-    bus->irq = irq;
-    bus->dma = &ide_dma_nop;
-}
-
-/* TODO convert users to qdev and remove */
-void ide_init2_with_non_qdev_drives(IDEBus *bus, DriveInfo *hd0,
-                                    DriveInfo *hd1, qemu_irq irq)
-{
-    int i, trans;
-    DriveInfo *dinfo;
-    uint32_t cyls, heads, secs;
-
-    for(i = 0; i < 2; i++) {
-        dinfo = i == 0 ? hd0 : hd1;
-        ide_init1(bus, i);
-        if (dinfo) {
-            cyls  = dinfo->cyls;
-            heads = dinfo->heads;
-            secs  = dinfo->secs;
-            trans = dinfo->trans;
-            if (!cyls && !heads && !secs) {
-                hd_geometry_guess(dinfo->bdrv, &cyls, &heads, &secs, &trans);
-            } else if (trans == BIOS_ATA_TRANSLATION_AUTO) {
-                trans = hd_bios_chs_auto_trans(cyls, heads, secs);
-            }
-            if (cyls < 1 || cyls > 65535) {
-                error_report("cyls must be between 1 and 65535");
-                exit(1);
-            }
-            if (heads < 1 || heads > 16) {
-                error_report("heads must be between 1 and 16");
-                exit(1);
-            }
-            if (secs < 1 || secs > 255) {
-                error_report("secs must be between 1 and 255");
-                exit(1);
-            }
-            if (ide_init_drive(&bus->ifs[i], dinfo->bdrv,
-                               dinfo->media_cd ? IDE_CD : IDE_HD,
-                               NULL, dinfo->serial, NULL, 0,
-                               cyls, heads, secs, trans) < 0) {
-                error_report("Can't set up IDE drive %s", dinfo->id);
-                exit(1);
-            }
-            bdrv_attach_dev_nofail(dinfo->bdrv, &bus->ifs[i]);
-        } else {
-            ide_reset(&bus->ifs[i]);
-        }
     }
     bus->irq = irq;
     bus->dma = &ide_dma_nop;
@@ -2390,8 +2370,7 @@ static const VMStateDescription vmstate_ide_atapi_gesn_state = {
     .name ="ide_drive/atapi/gesn_state",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_BOOL(events.new_media, IDEState),
         VMSTATE_BOOL(events.eject_request, IDEState),
         VMSTATE_END_OF_LIST()
@@ -2402,7 +2381,6 @@ static const VMStateDescription vmstate_ide_tray_state = {
     .name = "ide_drive/tray_state",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .fields = (VMStateField[]) {
         VMSTATE_BOOL(tray_open, IDEState),
         VMSTATE_BOOL(tray_locked, IDEState),
@@ -2414,10 +2392,9 @@ static const VMStateDescription vmstate_ide_drive_pio_state = {
     .name = "ide_drive/pio_state",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .pre_save = ide_drive_pio_pre_save,
     .post_load = ide_drive_pio_post_load,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_INT32(req_nb_sectors, IDEState),
         VMSTATE_VARRAY_INT32(io_buffer, IDEState, io_buffer_total_len, 1,
 			     vmstate_info_uint8, uint8_t),
@@ -2434,9 +2411,8 @@ const VMStateDescription vmstate_ide_drive = {
     .name = "ide_drive",
     .version_id = 3,
     .minimum_version_id = 0,
-    .minimum_version_id_old = 0,
     .post_load = ide_drive_post_load,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_INT32(mult_sectors, IDEState),
         VMSTATE_INT32(identify_set, IDEState),
         VMSTATE_BUFFER_TEST(identify_data, IDEState, is_identify_set),
@@ -2479,8 +2455,7 @@ static const VMStateDescription vmstate_ide_error_status = {
     .name ="ide_bus/error",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_INT32(error_status, IDEBus),
         VMSTATE_END_OF_LIST()
     }
@@ -2490,8 +2465,7 @@ const VMStateDescription vmstate_ide_bus = {
     .name = "ide_bus",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_UINT8(cmd, IDEBus),
         VMSTATE_UINT8(unit, IDEBus),
         VMSTATE_END_OF_LIST()

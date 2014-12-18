@@ -17,11 +17,12 @@
 
 #include "virtio.h"
 
+#if 0
 typedef struct {
     uint16_t tag_lenth;
     char tag[0];
 } virtio_9p_config_t;
-
+#endif
 int virtio_9p_init(struct virtio_device *dev, void *tx_buf, void *rx_buf,
 		   int buf_size);
 void virtio_9p_shutdown(struct virtio_device *dev);

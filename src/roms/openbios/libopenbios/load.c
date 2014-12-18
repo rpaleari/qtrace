@@ -44,11 +44,17 @@
 struct sys_info sys_info;
 void *elf_boot_notes = NULL;
 
+/* ( addr -- size ) */
+
 void load(ihandle_t dev)
 {
 	/* Invoke the loaders on the specified device */
 	char *param;
-        ucell valid;
+	ucell valid;
+
+	/* TODO: Currently the internal loader APIs use load-base directly, so
+	   drop the address */
+	POP();
 
 #ifdef CONFIG_LOADER_ELF
 
@@ -65,6 +71,7 @@ void load(ihandle_t dev)
         feval("state-valid @");
         valid = POP();
         if (valid) {
+                feval("saved-program-state >sps.file-size @");
                 return;
         }
 #endif
@@ -74,6 +81,7 @@ void load(ihandle_t dev)
         feval("state-valid @");
         valid = POP();
         if (valid) {
+                feval("saved-program-state >sps.file-size @");
                 return;
         }
 #endif
@@ -83,6 +91,7 @@ void load(ihandle_t dev)
         feval("state-valid @");
         valid = POP();
         if (valid) {
+                feval("saved-program-state >sps.file-size @");
                 return;
         }
 #endif
@@ -92,17 +101,22 @@ void load(ihandle_t dev)
         feval("state-valid @");
         valid = POP();
         if (valid) {
+                feval("saved-program-state >sps.file-size @");
                 return;
         }
 #endif
 
 #ifdef CONFIG_LOADER_BOOTCODE
 	/* Check for a "raw" %BOOT bootcode payload */
-	feval("want-bootcode @");
-	valid = POP();
-	if (valid) {
-                bootcode_load(dev);
-	}
+	bootcode_load(dev);
+        feval("state-valid @");
+        valid = POP();
+        if (valid) {
+                feval("saved-program-state >sps.file-size @");
+                return;
+        }
 #endif
 
+        /* Didn't load anything, so return zero size */
+        PUSH(0);
 }

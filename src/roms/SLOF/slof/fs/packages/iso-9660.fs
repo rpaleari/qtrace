@@ -72,7 +72,7 @@ INSTANCE VARIABLE index
 
 : free-data ( -- )
    data-buff @                              ( data-buff )
-   ?DUP  IF  #data @  free-mem  0 data-buff ! THEN
+   ?DUP  IF  #data @  free-mem  0 data-buff ! 0 #data ! THEN
 ;
 
 
@@ -81,12 +81,14 @@ INSTANCE VARIABLE index
 \ media in to it.
 
 : read-data ( offset size -- )
-   free-data  DUP                     ( offset size size )
-   #data !  alloc-mem   data-buff !   (  offset )
-   xlsplit                            ( pos.lo pos.hi )
+   dup #data @ > IF
+      free-data dup dup                  ( offset size size size )
+      #data ! alloc-mem data-buff !      ( offset size )
+   THEN
+   swap xlsplit                          ( size pos.lo pos.hi )
    seek   -2 and ABORT" seek failed."
-   data-buff  @  #data @  read        ( actual )
-   #data @  <> ABORT" read failed."
+   data-buff @ over read                 ( size actual )
+   <> ABORT" read failed."
 ;
 
 

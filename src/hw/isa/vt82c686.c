@@ -185,7 +185,7 @@ static void pm_update_sci(VT686PMState *s)
                    ACPI_BITMASK_POWER_BUTTON_ENABLE |
                    ACPI_BITMASK_GLOBAL_LOCK_ENABLE |
                    ACPI_BITMASK_TIMER_ENABLE)) != 0);
-    qemu_set_irq(s->dev.irq[0], sci_level);
+    pci_set_irq(&s->dev, sci_level);
     /* schedule a timer interruption if needed */
     acpi_pm_tmr_update(&s->ar, (s->ar.pm1.evt.en & ACPI_BITMASK_TIMER_ENABLE) &&
                        !(pmsts & ACPI_BITMASK_TIMER_STATUS));
@@ -230,9 +230,8 @@ static const VMStateDescription vmstate_acpi = {
     .name = "vt82c686b_pm",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
     .post_load = vmstate_acpi_post_load,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(dev, VT686PMState),
         VMSTATE_UINT16(ar.pm1.evt.sts, VT686PMState),
         VMSTATE_UINT16(ar.pm1.evt.en, VT686PMState),
@@ -369,8 +368,8 @@ static int vt82c686b_pm_initfn(PCIDevice *dev)
     return 0;
 }
 
-i2c_bus *vt82c686b_pm_init(PCIBus *bus, int devfn, uint32_t smb_io_base,
-                       qemu_irq sci_irq)
+I2CBus *vt82c686b_pm_init(PCIBus *bus, int devfn, uint32_t smb_io_base,
+                          qemu_irq sci_irq)
 {
     PCIDevice *dev;
     VT686PMState *s;
@@ -418,8 +417,7 @@ static const VMStateDescription vmstate_via = {
     .name = "vt82c686b",
     .version_id = 1,
     .minimum_version_id = 1,
-    .minimum_version_id_old = 1,
-    .fields      = (VMStateField []) {
+    .fields = (VMStateField[]) {
         VMSTATE_PCI_DEVICE(dev, VT82C686BState),
         VMSTATE_END_OF_LIST()
     }
@@ -480,8 +478,12 @@ static void via_class_init(ObjectClass *klass, void *data)
     k->class_id = PCI_CLASS_BRIDGE_ISA;
     k->revision = 0x40;
     dc->desc = "ISA bridge";
-    dc->no_user = 1;
     dc->vmsd = &vmstate_via;
+    /*
+     * Reason: part of VIA VT82C686 southbridge, needs to be wired up,
+     * e.g. by mips_fulong2e_init()
+     */
+    dc->cannot_instantiate_with_device_add_yet = true;
 }
 
 static const TypeInfo via_info = {

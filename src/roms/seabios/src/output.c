@@ -1,16 +1,21 @@
 // Raw screen writing and debug output code.
 //
-// Copyright (C) 2008,2009  Kevin O'Connor <kevin@koconnor.net>
+// Copyright (C) 2008-2013  Kevin O'Connor <kevin@koconnor.net>
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include <stdarg.h> // va_list
 
 #include "farptr.h" // GET_VAR
-#include "util.h" // printf
 #include "bregs.h" // struct bregs
 #include "config.h" // CONFIG_*
 #include "biosvar.h" // GET_GLOBAL
+#include "hw/serialio.h" // serial_debug_putc
+#include "malloc.h" // malloc_tmp
+#include "output.h" // dprintf
+#include "stacks.h" // call16_int
+#include "string.h" // memset
+#include "util.h" // ScreenAndDebug
 
 struct putcinfo {
     void (*func)(struct putcinfo *info, char c);
@@ -21,79 +26,40 @@ struct putcinfo {
  * Debug output
  ****************************************************************/
 
-#define DEBUG_TIMEOUT 100000
-
-u16 DebugOutputPort VAR16VISIBLE = 0x402;
-
 void
-debug_serial_setup(void)
+debug_banner(void)
 {
-    if (!CONFIG_DEBUG_SERIAL)
-        return;
-    // setup for serial logging: 8N1
-    u8 oldparam, newparam = 0x03;
-    oldparam = inb(CONFIG_DEBUG_SERIAL_PORT+SEROFF_LCR);
-    outb(newparam, CONFIG_DEBUG_SERIAL_PORT+SEROFF_LCR);
-    // Disable irqs
-    u8 oldier, newier = 0;
-    oldier = inb(CONFIG_DEBUG_SERIAL_PORT+SEROFF_IER);
-    outb(newier, CONFIG_DEBUG_SERIAL_PORT+SEROFF_IER);
-
-    if (oldparam != newparam || oldier != newier)
-        dprintf(1, "Changing serial settings was %x/%x now %x/%x\n"
-                , oldparam, oldier, newparam, newier);
-}
-
-// Write a character to the serial port.
-static void
-debug_serial(char c)
-{
-    if (!CONFIG_DEBUG_SERIAL)
-        return;
-    int timeout = DEBUG_TIMEOUT;
-    while ((inb(CONFIG_DEBUG_SERIAL_PORT+SEROFF_LSR) & 0x20) != 0x20)
-        if (!timeout--)
-            // Ran out of time.
-            return;
-    outb(c, CONFIG_DEBUG_SERIAL_PORT+SEROFF_DATA);
-}
-
-// Make sure all serial port writes have been completely sent.
-static void
-debug_serial_flush(void)
-{
-    if (!CONFIG_DEBUG_SERIAL)
-        return;
-    int timeout = DEBUG_TIMEOUT;
-    while ((inb(CONFIG_DEBUG_SERIAL_PORT+SEROFF_LSR) & 0x60) != 0x60)
-        if (!timeout--)
-            // Ran out of time.
-            return;
+    dprintf(1, "SeaBIOS (version %s)\n", VERSION);
 }
 
 // Write a character to debug port(s).
 static void
-putc_debug(struct putcinfo *action, char c)
+debug_putc(struct putcinfo *action, char c)
 {
     if (! CONFIG_DEBUG_LEVEL)
         return;
-    if (CONFIG_DEBUG_IO)
-        // Send character to debug port.
-        outb(c, GET_GLOBAL(DebugOutputPort));
-    if (c == '\n')
-        debug_serial('\r');
-    debug_serial(c);
+    qemu_debug_putc(c);
+    if (!MODESEGMENT)
+        coreboot_debug_putc(c);
+    serial_debug_putc(c);
 }
 
-// In segmented mode just need a dummy variable (putc_debug is always
+// Flush any pending output to debug port(s).
+static void
+debug_flush(void)
+{
+    serial_debug_flush();
+}
+
+// In segmented mode just need a dummy variable (debug_putc is always
 // used anyway), and in 32bit flat mode need a pointer to the 32bit
-// instance of putc_debug().
+// instance of debug_putc().
 #if MODE16
 static struct putcinfo debuginfo VAR16;
 #elif MODESEGMENT
 static struct putcinfo debuginfo VAR32SEG;
 #else
-static struct putcinfo debuginfo = { putc_debug };
+static struct putcinfo debuginfo = { debug_putc };
 #endif
 
 
@@ -110,21 +76,22 @@ screenc(char c)
     br.flags = F_IF;
     br.ah = 0x0e;
     br.al = c;
+    br.bl = 0x07;
     call16_int(0x10, &br);
 }
 
 // Handle a character from a printf request.
 static void
-putc_screen(struct putcinfo *action, char c)
+screen_putc(struct putcinfo *action, char c)
 {
     if (ScreenAndDebug)
-        putc_debug(&debuginfo, c);
+        debug_putc(&debuginfo, c);
     if (c == '\n')
         screenc('\r');
     screenc(c);
 }
 
-static struct putcinfo screeninfo = { putc_screen };
+static struct putcinfo screeninfo = { screen_putc };
 
 
 /****************************************************************
@@ -137,7 +104,7 @@ putc(struct putcinfo *action, char c)
 {
     if (MODESEGMENT) {
         // Only debugging output supported in segmented mode.
-        putc_debug(action, c);
+        debug_putc(action, c);
         return;
     }
 
@@ -340,7 +307,7 @@ panic(const char *fmt, ...)
         va_start(args, fmt);
         bvprintf(&debuginfo, fmt, args);
         va_end(args);
-        debug_serial_flush();
+        debug_flush();
     }
 
     // XXX - use PANIC PORT.
@@ -357,10 +324,10 @@ __dprintf(const char *fmt, ...)
         struct thread_info *cur = getCurThread();
         if (cur != &MainThread) {
             // Show "thread id" for this debug message.
-            putc_debug(&debuginfo, '|');
+            debug_putc(&debuginfo, '|');
             puthex(&debuginfo, (u32)cur, 8);
-            putc_debug(&debuginfo, '|');
-            putc_debug(&debuginfo, ' ');
+            debug_putc(&debuginfo, '|');
+            debug_putc(&debuginfo, ' ');
         }
     }
 
@@ -368,7 +335,7 @@ __dprintf(const char *fmt, ...)
     va_start(args, fmt);
     bvprintf(&debuginfo, fmt, args);
     va_end(args);
-    debug_serial_flush();
+    debug_flush();
 }
 
 void
@@ -380,7 +347,7 @@ printf(const char *fmt, ...)
     bvprintf(&screeninfo, fmt, args);
     va_end(args);
     if (ScreenAndDebug)
-        debug_serial_flush();
+        debug_flush();
 }
 
 
@@ -471,7 +438,7 @@ hexdump(const void *d, int len)
         d+=4;
     }
     putc(&debuginfo, '\n');
-    debug_serial_flush();
+    debug_flush();
 }
 
 static void
@@ -495,7 +462,7 @@ __debug_isr(const char *fname)
 {
     puts_cs(&debuginfo, fname);
     putc(&debuginfo, '\n');
-    debug_serial_flush();
+    debug_flush();
 }
 
 // Function called on handler startup.

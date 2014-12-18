@@ -20,5 +20,3 @@ stageS		board-js2x/llfw/stageS.bin	0		0
 bootinfo	board-js2x/llfw/Cboot.bin	0		0
 rtas		board-js2x/rtas/rtas.bin	0		0
 snk		clients/net-snk.client		0		0
-net_bcm 	drivers/bcm57xx/net_bcm57xx.elf	0		0
-net_e1000	drivers/e1k/net_e1k.elf		0		0

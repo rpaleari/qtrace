@@ -15,6 +15,7 @@
  */
 
 #include "config.h"
+#include "libc/vsprintf.h"
 #include "libopenbios/bindings.h"
 #include "libopenbios/fontdata.h"
 #include "libopenbios/ofmem.h"
@@ -40,35 +41,6 @@ video_get_color( int col_ind )
 	if( VIDEO_DICT_VALUE(video.depth) == 15 )
 		return ((col>>9) & 0x7c00) | ((col>>6) & 0x03e0) | ((col>>3) & 0x1f);
 	return 0;
-}
-
-void
-video_set_color( int ind, unsigned long color )
-{
-	xt_t hw_xt = 0;
-
-	if( !VIDEO_DICT_VALUE(video.ih) || ind < 0 || ind > 255 )
-		return;
-	video.pal[ind] = color;
-
-	/* Call the low-level hardware setter in the
-	   display package */
-	hw_xt = find_ih_method("hw-set-color", VIDEO_DICT_VALUE(video.ih));
-	if (hw_xt) {
-		PUSH((color >> 16) & 0xff);  // Red
-		PUSH((color >> 8) & 0xff);  // Green
-		PUSH(color & 0xff);  // Blue
-		PUSH(ind);
-		PUSH(hw_xt);
-		fword("execute");
-	}
-
-	/* Call the low-level palette update if required */
-	hw_xt = find_ih_method("hw-refresh-palette", VIDEO_DICT_VALUE(video.ih));
-	if (hw_xt) {
-		PUSH(hw_xt);
-		fword("execute");
-	}
 }
 
 /* ( fbaddr maskaddr width height fgcolor bgcolor -- ) */
@@ -213,18 +185,18 @@ video_fill_rect(void)
 	}
 }
 
-void setup_video(phys_addr_t phys, ucell virt)
+void setup_video()
 {
 	/* Make everything inside the video_info structure point to the
 	   values in the Forth dictionary. Hence everything is always in
 	   sync. */
-
-	video.mphys = phys;
+	phandle_t options;
+	char buf[6];
 
 	feval("['] display-ih cell+");
 	video.ih = cell2pointer(POP());
 
-	feval("['] openbios-video-addr cell+");
+	feval("['] frame-buffer-adr cell+");
 	video.mvirt = cell2pointer(POP());
 	feval("['] openbios-video-width cell+");
 	video.w = cell2pointer(POP());
@@ -257,7 +229,6 @@ void setup_video(phys_addr_t phys, ucell virt)
 	feval("to (romfont-width)");
 
 	/* Initialise the structure */
-	VIDEO_DICT_VALUE(video.mvirt) = virt;
 	VIDEO_DICT_VALUE(video.w) = VGA_DEFAULT_WIDTH;
 	VIDEO_DICT_VALUE(video.h) = VGA_DEFAULT_HEIGHT;
 	VIDEO_DICT_VALUE(video.depth) = VGA_DEFAULT_DEPTH;
@@ -277,4 +248,11 @@ void setup_video(phys_addr_t phys, ucell virt)
 		VIDEO_DICT_VALUE(video.rb) = (w * ((d + 7) / 8));
 	}
 #endif
+
+	/* Setup screen-#rows/screen-#columns */
+	options = find_dev("/options");
+	snprintf(buf, sizeof(buf), FMT_ucell, VIDEO_DICT_VALUE(video.w) / FONT_WIDTH);
+	set_property(options, "screen-#columns", buf, strlen(buf) + 1);
+	snprintf(buf, sizeof(buf), FMT_ucell, VIDEO_DICT_VALUE(video.h) / FONT_HEIGHT);
+	set_property(options, "screen-#rows", buf, strlen(buf) + 1);
 }
