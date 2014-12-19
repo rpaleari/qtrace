@@ -78,11 +78,11 @@ ratio=auto;
     def _visitSyscall(self, s):
         name = s.name
         if name is None:
-            name == hex(s.obj.sysno)
+            name == hex(s.sysno)
 
-        n = self.__graph.getNodeByID(s.obj.sysno)
+        n = self.__graph.getNodeByID(s.sysno)
         if n is None:
-            n = graph.Node(name, s.obj.sysno)
+            n = graph.Node(name, s.sysno)
             if s.isGUI():
                 color = "#b3cde3"
             else:
@@ -94,14 +94,14 @@ ratio=auto;
             count = n.getAttribute("count")
             n.setAttribute("count", count + 1)
 
-        assert s.obj.id not in self.__nodes
-        self.__nodes[s.obj.id] = n
+        assert s.idz not in self.__nodes
+        self.__nodes[s.idz] = n
 
         for taintlabel in set(s.getTaintUses()):
             defobj = self.getSyscallFromLabel(taintlabel)
             assert defobj is not None
 
-            d = self.__nodes[defobj.obj.id]
+            d = self.__nodes[defobj.idz]
             if d is not None:
                 edgelabel = self.__graph.getEdgeLabel(d, n)
                 if edgelabel is None:

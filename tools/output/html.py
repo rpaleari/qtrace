@@ -87,7 +87,7 @@ class HTMLOutputGenerator(output.OutputGenerator):
         else:
             ff.append('<span class="flagEmpty">X</span>')
 
-        if sysobj.obj.sysno > 4095:
+        if sysobj.sysno > 4095:
             # win32k system call
             ff.append('<span title="GUI" class="flagGUI">G</span>')
         else:
@@ -99,7 +99,7 @@ class HTMLOutputGenerator(output.OutputGenerator):
         # Compute HTML flags for this system call
         htmlflags = self.__generateFlags(s)
 
-        h = '<div id="sys%d" class="syscall">\n' % s.obj.id
+        h = '<div id="sys%d" class="syscall">\n' % s.idz
 
         h += """\
 <div>
@@ -107,7 +107,7 @@ class HTMLOutputGenerator(output.OutputGenerator):
   <span class="syshead" onclick="javascript:showSyscallBody(%d)">%s %s</span>&nbsp;
   <span class="comment">(sysid: 0x%.4x, arguments: %d)</span>
 </div>
-""" % (s.obj.id, s.obj.id, htmlflags, s.name, s.obj.sysno, len(s.arguments))
+""" % (s.idz, s.idz, htmlflags, s.name, s.sysno, len(s.arguments))
 
         h += """\
 <div class="sysbody">
@@ -120,8 +120,8 @@ class HTMLOutputGenerator(output.OutputGenerator):
         <td>0x%08x <span class="comment">(taint label %d)</span></td>
     </tr>
   </table>
-"""  % (s.obj.process.pid, s.obj.process.tid, s.obj.process.name,
-        s.obj.retval, s.obj.taintlabel_retval)
+"""  % (s.process_pid, s.process_tid, s.process_name,
+        s.retval, s.taintlabel_retval)
 
         h += '<table class="sysargs">\n'
 
@@ -136,7 +136,7 @@ class HTMLOutputGenerator(output.OutputGenerator):
         for i in range(len(s.arguments)):
             arg = s.arguments[i]
             argpath = (i, )
-            h += self._visitArgument(s.obj.sysno, argpath, arg)
+            h += self._visitArgument(s.sysno, argpath, arg)
 
         h += "</table>\n"
         h += "</div>\n"
@@ -154,11 +154,11 @@ class HTMLOutputGenerator(output.OutputGenerator):
         s += '<td style="text-align:left;">%s</td>' % argno
 
         # Address
-        s += '<td>0x%08x</td>' % arg.obj.addr
+        s += '<td>0x%08x</td>' % arg.addr
 
         # Direction, size & offset
         s += '<td>%s</td><td>%d</td><td>%d</td>' % (arg.getDirectionName(),
-                                                    arg.getSize(), arg.obj.offset)
+                                                    arg.getSize(), arg.offset)
 
         # Taint labels (uses and defs)
         s += "<td>%s</td><td>%s</td>" % (self.__generateTaintUses(arg),
@@ -190,7 +190,7 @@ class HTMLOutputGenerator(output.OutputGenerator):
 
             data = '<span class="taint" title="Goto syscall #%d" ' \
                    'onclick="javascript:gotoSyscall(%d);">%d</span>' % \
-                (defobj.obj.id, defobj.obj.id, label)
+                (defobj.idz, defobj.idz, label)
             tainthtml.append(data)
         return ", ".join(tainthtml)
 

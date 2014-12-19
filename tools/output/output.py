@@ -54,11 +54,11 @@ class OutputGenerator(object):
         Update the taint labels map, associating labels defined by system call
         object "sysobj" with the object itself.
         """
-        outlabels = [sysobj.obj.taintlabel_retval, ]
+        outlabels = [sysobj.taintlabel_retval, ]
         outlabels.extend(sysobj.getTaintDefs())
         for label in outlabels:
             defobj = self.__taintmap.get(label, None)
-            assert defobj is None or defobj.obj.id == sysobj.obj.id
+            assert defobj is None or defobj.idz == sysobj.idz
             self.__taintmap[label] = sysobj
 
     def visit(self, obj):

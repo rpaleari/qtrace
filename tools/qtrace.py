@@ -82,7 +82,7 @@ def main():
             print reader.header
 
         for syscall in reader:
-            idz = syscall.obj.id
+            idz = syscall.idz
             assert idz not in syscalls, "Duplicated syscall ID #%d" % idz
             syscalls[idz] = syscall
 
@@ -146,7 +146,7 @@ def main():
     # Execute
     if args.execute:
         logging.info("==== Testing syscall execution ====")
-        logging.info("Executing system call #%d", syscall.obj.sysno)
+        logging.info("Executing system call #%d", syscall.sysno)
         retval = syscall.execute()
         logging.info("Execution completed, return value: 0x%.8x", retval)
 
