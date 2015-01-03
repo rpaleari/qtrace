@@ -54,6 +54,11 @@ executable must be able to load `libqtrace.so`:
 QTrace verbosity level can be adjusted by changing the `LOG_LEVEL` macro
 defined in `qtrace/logging.h`.
 
+Finally, if you plan to use the Python tools (under `tools/`), you should also compile the Python version of the protobuf module, using the following commands:
+
+    cd tools/trace
+    protoc --python_out=. syscall.proto
+
 QEMU options
 ------------
 
